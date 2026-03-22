@@ -30,6 +30,7 @@ from starlette.background import BackgroundTask
 
 try:
     from .admin_asset_service import (
+        build_builtin_augmentation_item,
         list_managed_augmentation_scripts,
         list_managed_models,
         save_uploaded_file,
@@ -40,9 +41,9 @@ try:
         ensure_augmentation_algorithms_dir,
         get_active_augmentation_script_path,
         get_builtin_augmentation_script_path,
-        list_managed_augmentation_paths,
         read_active_augmentation_override,
         resolve_unique_augmentation_script_target,
+        write_augmentation_metadata,
         write_active_augmentation_override,
     )
     from .auth_store import AuthStore
@@ -58,6 +59,7 @@ try:
         AnnotationAugmentRequest,
         AnnotationAugmentResponse,
         AnnotationClassCreateRequest,
+        AnnotationClassTemplateItem,
         AnnotationClassDeleteRequest,
         AnnotationDatasetItem,
         ClassAdviceData,
@@ -94,6 +96,7 @@ try:
     )
 except ImportError:
     from admin_asset_service import (
+        build_builtin_augmentation_item,
         list_managed_augmentation_scripts,
         list_managed_models,
         save_uploaded_file,
@@ -104,9 +107,9 @@ except ImportError:
         ensure_augmentation_algorithms_dir,
         get_active_augmentation_script_path,
         get_builtin_augmentation_script_path,
-        list_managed_augmentation_paths,
         read_active_augmentation_override,
         resolve_unique_augmentation_script_target,
+        write_augmentation_metadata,
         write_active_augmentation_override,
     )
     from auth_store import AuthStore
@@ -122,6 +125,7 @@ except ImportError:
         AnnotationAugmentRequest,
         AnnotationAugmentResponse,
         AnnotationClassCreateRequest,
+        AnnotationClassTemplateItem,
         AnnotationClassDeleteRequest,
         AnnotationDatasetItem,
         ClassAdviceData,
@@ -174,9 +178,84 @@ TRAINING_TASKS: Dict[str, Dict[str, object]] = {}
 TRAINING_TASKS_LOCK = threading.Lock()
 ACTIVE_TRAINING_TASK_ID: Optional[str] = None
 
+ANNOTATION_CLASS_TEMPLATE_SPECS = (
+    {
+        "key": "blank",
+        "label": "空白模板",
+        "description": "从零开始搭建类别库，只保留当前数据集真正需要的标注类。",
+        "prefixes": (),
+    },
+    {
+        "key": "universal",
+        "label": "通用病害库",
+        "description": "完整基础病害类别，适合综合识别基线或混合作物数据集。",
+        "prefixes": None,
+    },
+    {
+        "key": "apple",
+        "label": "苹果病害",
+        "description": "苹果叶片与病害检测类。",
+        "prefixes": ("Apple",),
+    },
+    {
+        "key": "corn",
+        "label": "玉米病害",
+        "description": "玉米叶片与病害检测类。",
+        "prefixes": ("Corn",),
+    },
+    {
+        "key": "tomato",
+        "label": "番茄病害",
+        "description": "番茄叶片与病害检测类。",
+        "prefixes": ("Tomato",),
+    },
+    {
+        "key": "potato",
+        "label": "马铃薯病害",
+        "description": "马铃薯叶片与病害检测类。",
+        "prefixes": ("Potato",),
+    },
+    {
+        "key": "grape",
+        "label": "葡萄病害",
+        "description": "葡萄叶片与病害检测类。",
+        "prefixes": ("grape",),
+    },
+    {
+        "key": "pepper",
+        "label": "甜椒病害",
+        "description": "甜椒叶片与病害检测类。",
+        "prefixes": ("Bell_pepper",),
+    },
+    {
+        "key": "soybean",
+        "label": "大豆病害",
+        "description": "大豆叶片与病害检测类。",
+        "prefixes": ("Soybean", "Soyabean"),
+    },
+    {
+        "key": "berry",
+        "label": "浆果作物",
+        "description": "蓝莓、草莓、树莓等浆果作物病害类。",
+        "prefixes": ("Blueberry", "Strawberry", "Raspberry"),
+    },
+)
+
 
 def current_timestamp() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def parse_freeform_list(raw_value: Optional[str]) -> List[str]:
+    if not raw_value:
+        return []
+    parts = re.split(r"[,，/\n]+", str(raw_value))
+    deduped: List[str] = []
+    for item in parts:
+        normalized = str(item).strip()
+        if normalized and normalized not in deduped:
+            deduped.append(normalized)
+    return deduped
 
 
 def ensure_supported_uploaded_image(file: UploadFile) -> None:
@@ -814,6 +893,72 @@ def load_base_annotation_classes() -> List[str]:
     return raw
 
 
+def build_annotation_class_templates(base_classes: List[str]) -> List[AnnotationClassTemplateItem]:
+    deduped_classes = list(dict.fromkeys(base_classes))
+    templates: List[AnnotationClassTemplateItem] = []
+    for spec in ANNOTATION_CLASS_TEMPLATE_SPECS:
+        prefixes = spec["prefixes"]
+        if prefixes is None:
+            template_classes = deduped_classes
+        elif not prefixes:
+            template_classes = []
+        else:
+            template_classes = [
+                class_name
+                for class_name in deduped_classes
+                if any(class_name.lower().startswith(str(prefix).lower()) for prefix in prefixes)
+            ]
+        if not template_classes and spec["key"] not in {"blank", "universal"}:
+            continue
+        templates.append(
+            AnnotationClassTemplateItem(
+                key=str(spec["key"]),
+                label=str(spec["label"]),
+                description=str(spec["description"]),
+                class_count=len(template_classes),
+                classes=template_classes,
+            )
+        )
+    return templates
+
+
+def list_annotation_class_templates() -> List[AnnotationClassTemplateItem]:
+    return build_annotation_class_templates(load_base_annotation_classes())
+
+
+def get_annotation_class_template(template_key: Optional[str]) -> Optional[AnnotationClassTemplateItem]:
+    normalized_key = str(template_key or "").strip().lower()
+    if not normalized_key:
+        return None
+    for template in list_annotation_class_templates():
+        if template.key == normalized_key:
+            return template
+    return None
+
+
+def detect_annotation_class_template_key(
+    classes: List[str],
+    templates: Optional[List[AnnotationClassTemplateItem]] = None,
+) -> Optional[str]:
+    available_templates = templates or list_annotation_class_templates()
+    current_set = set(classes)
+    if not current_set:
+        return "blank"
+
+    for template in available_templates:
+        if current_set == set(template.classes):
+            return template.key
+
+    focused_matches = [
+        template.key
+        for template in available_templates
+        if template.key not in {"blank", "universal"} and current_set and current_set.issubset(set(template.classes))
+    ]
+    if len(focused_matches) == 1:
+        return focused_matches[0]
+    return "custom"
+
+
 def ensure_annotation_root() -> Path:
     root = Path(settings.annotation_datasets_root)
     root.mkdir(parents=True, exist_ok=True)
@@ -931,10 +1076,9 @@ def load_annotation_classes(
 
     if classes_file.exists():
         classes = [line.strip() for line in classes_file.read_text(encoding="utf-8").splitlines() if line.strip()]
-        if classes:
-            if require_write:
-                ensure_annotation_dataset_structure(dataset_key, classes)
-            return dataset_key, classes, structure
+        if require_write:
+            ensure_annotation_dataset_structure(dataset_key, classes)
+        return dataset_key, classes, structure
 
     base_classes = load_base_annotation_classes()
     if require_write:
@@ -947,6 +1091,7 @@ def build_annotation_classes_response(
     dataset_name: Optional[str] = None,
     message: str = "annotation classes available",
 ) -> AnnotationClassesResponse:
+    class_templates = list_annotation_class_templates()
     available_datasets = list_annotation_datasets(current_user)
     available_dataset_items = [build_annotation_dataset_item(dataset, current_user) for dataset in available_datasets]
     requested_dataset = safe_annotation_dataset_name(dataset_name) if dataset_name else ""
@@ -961,6 +1106,7 @@ def build_annotation_classes_response(
                 available_datasets=[],
                 available_dataset_items=[],
                 classes=[],
+                class_templates=class_templates,
                 class_advices=[],
                 dataset_dir="",
                 images_dir="",
@@ -968,6 +1114,7 @@ def build_annotation_classes_response(
                 source_pair_count=0,
                 train_pair_count=0,
                 val_pair_count=0,
+                selected_dataset_template_key="blank",
                 selected_dataset_is_public=False,
                 selected_dataset_is_official=False,
                 selected_dataset_owner_username=None,
@@ -995,6 +1142,7 @@ def build_annotation_classes_response(
             available_datasets=available_datasets,
             available_dataset_items=available_dataset_items,
             classes=classes,
+            class_templates=class_templates,
             class_advices=build_dataset_class_advices(selected_dataset, classes),
             dataset_dir=str(structure["dataset_dir"]),
             images_dir=str(structure["images_raw"]),
@@ -1002,6 +1150,7 @@ def build_annotation_classes_response(
             source_pair_count=source_pair_count,
             train_pair_count=train_pair_count,
             val_pair_count=val_pair_count,
+            selected_dataset_template_key=detect_annotation_class_template_key(classes, class_templates),
             selected_dataset_is_public=selected_dataset_item.is_public,
             selected_dataset_is_official=selected_dataset_item.is_official,
             selected_dataset_owner_username=selected_dataset_item.owner_username,
@@ -1016,6 +1165,7 @@ def create_annotation_dataset(
     current_user: Dict[str, object],
     source_dataset: Optional[str] = None,
     is_public: bool = False,
+    class_template_key: Optional[str] = None,
 ) -> str:
     dataset_key = safe_annotation_dataset_name(dataset_name)
     structure = get_annotation_dataset_structure(dataset_key)
@@ -1045,7 +1195,15 @@ def create_annotation_dataset(
             return dataset_key
         raise_dataset_name_unavailable()
 
-    source_classes = load_annotation_classes(source_dataset, current_user)[1] if source_dataset else load_base_annotation_classes()
+    if source_dataset:
+        source_classes = load_annotation_classes(source_dataset, current_user)[1]
+    elif class_template_key:
+        template = get_annotation_class_template(class_template_key)
+        if not template:
+            raise RuntimeError(f"未知的数据集类别模板：{class_template_key}")
+        source_classes = list(template.classes)
+    else:
+        source_classes = load_base_annotation_classes()
     ensure_annotation_dataset_structure(dataset_key, source_classes)
     auth_store.ensure_dataset_access_entry(dataset_key, int(current_user["id"]), is_public=is_public, overwrite_existing=True)
     return dataset_key
@@ -1317,6 +1475,7 @@ def import_annotation_dataset_archive(
 def build_admin_console_response(current_user: Dict[str, object], message: str = "管理员总控已就绪") -> AdminConsoleResponse:
     active_augment_path = get_active_augmentation_script_path()
     builtin_augment_path = get_builtin_augmentation_script_path()
+    builtin_item = build_builtin_augmentation_item(builtin_augment_path)
     sync_model_registry()
     model_records_by_name = {item["model_name"]: item for item in auth_store.list_all_models()}
     dataset_records = auth_store.list_all_datasets()
@@ -1332,6 +1491,7 @@ def build_admin_console_response(current_user: Dict[str, object], message: str =
             managed_datasets=[build_managed_dataset_item(item, current_user) for item in dataset_records],
             builtin_augmentation_script=builtin_augment_path.name if builtin_augment_path.exists() else builtin_augment_path.name,
             active_augmentation_script=active_augment_path.name if active_augment_path else None,
+            builtin_augmentation_item=builtin_item,
             managed_augmentation_scripts=list_managed_augmentation_scripts(),
         ),
     )
@@ -2358,6 +2518,11 @@ def admin_upload_augmentation_script(
     current_user: Dict[str, object] = Depends(require_admin),
     script_file: UploadFile = File(...),
     activate: bool = Form(default=True),
+    display_name: Optional[str] = Form(default=None),
+    version: Optional[str] = Form(default=None),
+    dataset_types: Optional[str] = Form(default=None),
+    description: Optional[str] = Form(default=None),
+    author: Optional[str] = Form(default=None),
 ) -> AdminConsoleResponse:
     script_filename = Path(script_file.filename or "").name
     if not script_filename.lower().endswith(".py"):
@@ -2367,7 +2532,19 @@ def admin_upload_augmentation_script(
     target_path = resolve_unique_augmentation_script_target(algorithms_dir, Path(script_filename).stem or "augmentation_algorithm")
     try:
         save_uploaded_file(script_file, target_path)
-    except RuntimeError as exc:
+        write_augmentation_metadata(
+            target_path,
+            {
+                "display_name": display_name,
+                "version": version,
+                "dataset_types": parse_freeform_list(dataset_types),
+                "description": description,
+                "author": author or current_user.get("display_name") or current_user.get("username"),
+            },
+        )
+    except (RuntimeError, OSError) as exc:
+        target_path.unlink(missing_ok=True)
+        target_path.with_suffix(".meta.json").unlink(missing_ok=True)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     if activate:
@@ -2542,7 +2719,13 @@ def create_dataset(
     current_user: Dict[str, object] = Depends(get_current_user),
 ) -> AnnotationClassesResponse:
     try:
-        dataset_key = create_annotation_dataset(payload.dataset_name, current_user, payload.source_dataset, payload.is_public)
+        dataset_key = create_annotation_dataset(
+            payload.dataset_name,
+            current_user,
+            payload.source_dataset,
+            payload.is_public,
+            payload.class_template_key,
+        )
         return build_annotation_classes_response(current_user, dataset_key, message=f"数据集已就绪：{dataset_key}")
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

@@ -91,6 +91,12 @@ class ManagedAugmentationItem(BaseModel):
     size_bytes: int
     uploaded_at: Optional[str] = None
     is_active: bool = False
+    is_builtin: bool = False
+    display_name: Optional[str] = None
+    version: Optional[str] = None
+    description: Optional[str] = None
+    dataset_types: List[str] = Field(default_factory=list)
+    author: Optional[str] = None
 
 
 class AdminConsoleData(BaseModel):
@@ -101,6 +107,7 @@ class AdminConsoleData(BaseModel):
     managed_datasets: List[ManagedDatasetItem] = Field(default_factory=list)
     builtin_augmentation_script: Optional[str] = None
     active_augmentation_script: Optional[str] = None
+    builtin_augmentation_item: Optional[ManagedAugmentationItem] = None
     managed_augmentation_scripts: List[ManagedAugmentationItem]
 
 
@@ -263,6 +270,7 @@ class AnnotationClassesData(BaseModel):
     available_datasets: List[str]
     available_dataset_items: List["AnnotationDatasetItem"] = Field(default_factory=list)
     classes: List[str]
+    class_templates: List["AnnotationClassTemplateItem"] = Field(default_factory=list)
     class_advices: List[ClassAdviceData] = Field(default_factory=list)
     dataset_dir: str
     images_dir: str
@@ -270,6 +278,7 @@ class AnnotationClassesData(BaseModel):
     source_pair_count: int
     train_pair_count: int
     val_pair_count: int
+    selected_dataset_template_key: Optional[str] = None
     selected_dataset_is_public: bool = False
     selected_dataset_is_official: bool = False
     selected_dataset_owner_username: Optional[str] = None
@@ -286,6 +295,14 @@ class AnnotationDatasetItem(BaseModel):
     owner_display_name: Optional[str] = None
 
 
+class AnnotationClassTemplateItem(BaseModel):
+    key: str
+    label: str
+    description: str
+    class_count: int
+    classes: List[str] = Field(default_factory=list)
+
+
 class AnnotationClassesResponse(BaseModel):
     success: bool
     message: str
@@ -296,6 +313,7 @@ class AnnotationDatasetCreateRequest(BaseModel):
     dataset_name: str
     source_dataset: Optional[str] = None
     is_public: bool = False
+    class_template_key: Optional[str] = None
 
 
 class AnnotationDatasetDeleteRequest(BaseModel):

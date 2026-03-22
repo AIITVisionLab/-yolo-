@@ -314,6 +314,7 @@ function App() {
             {getHealthSummary(health)}
           </span>
           <span className="status-pill">{getModelSummary(health)}</span>
+          <span className="status-pill status-pill--ghost">{getApiBaseLabel()}</span>
         </div>
         <div className="topbar__actions">
           {isAuthenticated ? (
@@ -349,19 +350,11 @@ function App() {
       {isAuthenticated ? (
         <main className="workspace workspace--editorial">
           <aside className="workspace__rail">
-            <div className="workspace__rail-group workspace__rail-group--intro">
-              <p className="workspace__rail-eyebrow">Plant Disease Platform</p>
-              <h2>{APP_NAME}</h2>
-              <p className="workspace__rail-caption">
-                先完成病害识别和标注训练，模型资产与平台管理收进次级入口，避免首页同时挤满全部功能。
-              </p>
-            </div>
-
             <div className="workspace__rail-group">
               <div className="workspace__rail-head">
                 <div>
                   <p className="workspace__rail-label">主流程</p>
-                  <p className="workspace__rail-note">先识别，再标注训练。</p>
+                  <p className="workspace__rail-note">先识别，再沉淀成训练数据。</p>
                 </div>
                 <span className="workspace__rail-badge">Core Flow</span>
               </div>
@@ -398,7 +391,7 @@ function App() {
                   />
                 ) : (
                   <p className="workspace__rail-note">
-                    上传和切换模型、查看平台资源、管理员总控都收在这里，不再和主流程抢视觉重点。
+                    模型、资源和管理员总控都放在这里，不再和主流程抢视觉重点。
                   </p>
                 )}
               </div>

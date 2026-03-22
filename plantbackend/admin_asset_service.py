@@ -4,11 +4,19 @@ from typing import Dict, List, Optional
 import shutil
 
 try:
-    from .augmentation_manager import get_active_augmentation_script_path, list_managed_augmentation_paths
+    from .augmentation_manager import (
+        get_active_augmentation_script_path,
+        list_managed_augmentation_paths,
+        read_augmentation_metadata,
+    )
     from .config import settings
     from .schemas import ManagedAugmentationItem, ManagedModelItem
 except ImportError:
-    from augmentation_manager import get_active_augmentation_script_path, list_managed_augmentation_paths
+    from augmentation_manager import (
+        get_active_augmentation_script_path,
+        list_managed_augmentation_paths,
+        read_augmentation_metadata,
+    )
     from config import settings
     from schemas import ManagedAugmentationItem, ManagedModelItem
 
@@ -76,12 +84,41 @@ def list_managed_augmentation_scripts() -> List[ManagedAugmentationItem]:
     active_path = get_active_augmentation_script_path()
     items: List[ManagedAugmentationItem] = []
     for script_path in list_managed_augmentation_paths():
+        metadata = read_augmentation_metadata(script_path)
         items.append(
             ManagedAugmentationItem(
                 name=script_path.name,
                 size_bytes=int(script_path.stat().st_size),
                 uploaded_at=format_file_timestamp(script_path),
                 is_active=active_path.resolve() == script_path.resolve(),
+                is_builtin=False,
+                display_name=str(metadata.get("display_name") or script_path.stem),
+                version=str(metadata.get("version") or "") or None,
+                description=str(metadata.get("description") or "") or None,
+                dataset_types=[str(item) for item in metadata.get("dataset_types", []) if str(item).strip()],
+                author=str(metadata.get("author") or "") or None,
             )
         )
     return items
+
+
+def build_builtin_augmentation_item(script_path: Path) -> ManagedAugmentationItem:
+    metadata = read_augmentation_metadata(script_path)
+    if not metadata.get("description"):
+        metadata["description"] = "默认基础增强链路，适合快速完成通用叶片检测数据集的扩增与划分。"
+    if not metadata.get("dataset_types"):
+        metadata["dataset_types"] = ["通用", "叶片病害", "目标检测"]
+    if not metadata.get("display_name"):
+        metadata["display_name"] = "内置基础增强"
+    return ManagedAugmentationItem(
+        name=script_path.name,
+        size_bytes=int(script_path.stat().st_size) if script_path.exists() else 0,
+        uploaded_at=format_file_timestamp(script_path),
+        is_active=get_active_augmentation_script_path().resolve() == script_path.resolve(),
+        is_builtin=True,
+        display_name=str(metadata.get("display_name") or "内置基础增强"),
+        version=str(metadata.get("version") or "builtin") or "builtin",
+        description=str(metadata.get("description") or ""),
+        dataset_types=[str(item) for item in metadata.get("dataset_types", []) if str(item).strip()],
+        author=str(metadata.get("author") or "系统内置"),
+    )

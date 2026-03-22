@@ -1,6 +1,8 @@
+import ast
+import json
 import re
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 try:
     from .config import settings
@@ -69,6 +71,64 @@ def list_managed_augmentation_paths() -> List[Path]:
     return sorted(
         [path for path in algorithms_dir.glob("*.py") if path.is_file() and path.stat().st_size > 0],
         key=lambda item: item.name.lower(),
+    )
+
+
+def get_augmentation_metadata_path(script_path: Path) -> Path:
+    return script_path.with_suffix(".meta.json")
+
+
+def normalize_augmentation_metadata(metadata: Optional[Dict[str, object]], script_path: Path) -> Dict[str, object]:
+    raw = metadata or {}
+    dataset_types = [
+        str(item).strip()
+        for item in raw.get("dataset_types", [])
+        if str(item).strip()
+    ]
+    return {
+        "display_name": str(raw.get("display_name") or script_path.stem).strip() or script_path.stem,
+        "version": str(raw.get("version") or "").strip() or None,
+        "description": str(raw.get("description") or "").strip() or None,
+        "dataset_types": dataset_types,
+        "author": str(raw.get("author") or "").strip() or None,
+    }
+
+
+def extract_augmentation_docstring(script_path: Path) -> Optional[str]:
+    try:
+        source = script_path.read_text(encoding="utf-8")
+        module = ast.parse(source)
+    except (OSError, SyntaxError, ValueError):
+        return None
+    docstring = ast.get_docstring(module)
+    if not docstring:
+        return None
+    normalized = re.sub(r"\s+", " ", docstring).strip()
+    return normalized or None
+
+
+def read_augmentation_metadata(script_path: Path) -> Dict[str, object]:
+    metadata_path = get_augmentation_metadata_path(script_path)
+    raw_metadata: Dict[str, object] = {}
+    if metadata_path.exists():
+        try:
+            loaded = json.loads(metadata_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                raw_metadata = loaded
+        except (OSError, json.JSONDecodeError):
+            raw_metadata = {}
+    normalized = normalize_augmentation_metadata(raw_metadata, script_path)
+    if not normalized.get("description"):
+        normalized["description"] = extract_augmentation_docstring(script_path)
+    return normalized
+
+
+def write_augmentation_metadata(script_path: Path, metadata: Optional[Dict[str, object]]) -> None:
+    normalized = normalize_augmentation_metadata(metadata, script_path)
+    metadata_path = get_augmentation_metadata_path(script_path)
+    metadata_path.write_text(
+        json.dumps(normalized, ensure_ascii=False, indent=2),
+        encoding="utf-8",
     )
 
 

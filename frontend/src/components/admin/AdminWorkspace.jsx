@@ -68,6 +68,14 @@ function buildUserTone(user) {
   return "普通用户";
 }
 
+function getAugmentationDisplayName(item) {
+  return item?.display_name || item?.name || "未命名算法";
+}
+
+function getAugmentationDatasetTypes(item) {
+  return Array.isArray(item?.dataset_types) && item.dataset_types.length ? item.dataset_types : ["通用数据集"];
+}
+
 export function AdminWorkspace({ token, isAuthenticated, user }) {
   const isAdmin = user?.role === "admin";
   const [consoleData, setConsoleData] = useState(null);
@@ -92,6 +100,11 @@ export function AdminWorkspace({ token, isAuthenticated, user }) {
   const [augmentationForm, setAugmentationForm] = useState({
     scriptFile: null,
     activate: true,
+    displayName: "",
+    version: "",
+    datasetTypes: "",
+    description: "",
+    author: "",
   });
 
   useEffect(() => {
@@ -165,6 +178,21 @@ export function AdminWorkspace({ token, isAuthenticated, user }) {
       },
     ];
   }, [consoleData, users]);
+  const augmentationCards = useMemo(() => {
+    const cards = [];
+    if (consoleData?.builtin_augmentation_item) {
+      cards.push(consoleData.builtin_augmentation_item);
+    }
+    cards.push(...(consoleData?.managed_augmentation_scripts || []));
+    return cards;
+  }, [consoleData]);
+  const highlightedAugmentation = useMemo(() => {
+    if (!augmentationCards.length) {
+      return null;
+    }
+    const selected = augmentationCards.find((item) => (item.is_builtin ? "" : item.name) === selectedAugmentation);
+    return selected || augmentationCards.find((item) => item.is_active) || augmentationCards[0];
+  }, [augmentationCards, selectedAugmentation]);
 
   async function reloadAdminState(message = "") {
     if (!token) {
@@ -254,6 +282,11 @@ export function AdminWorkspace({ token, isAuthenticated, user }) {
       setAugmentationForm({
         scriptFile: null,
         activate: true,
+        displayName: "",
+        version: "",
+        datasetTypes: "",
+        description: "",
+        author: "",
       });
     });
   }
@@ -287,12 +320,27 @@ export function AdminWorkspace({ token, isAuthenticated, user }) {
       <div className="native-workspace__panel native-workspace__panel--controls">
         <div className="native-workspace__section-head">
           <p className="workspace__section-label">Admin</p>
-          <h3>平台管理</h3>
-          <p>统一处理模型资产、数据集导入、增强算法切换和平台用户状态。</p>
+          <h3>平台总控台</h3>
+          <p>把模型、数据集、增强算法和用户状态集中在一个农业 AI 运维界面里，管理员可以直接完成上线和切换。</p>
+        </div>
+
+        <div className="admin-hero-card">
+          <div>
+            <span>当前生效增强</span>
+            <strong>{getAugmentationDisplayName(highlightedAugmentation)}</strong>
+          </div>
+          <div>
+            <span>当前在线模型</span>
+            <strong>{consoleData?.current_model || "未启用"}</strong>
+          </div>
+          <div>
+            <span>重点关注用户</span>
+            <strong>{users.filter((item) => item.is_flagged).length}</strong>
+          </div>
         </div>
 
         <div className="ops-metric-grid ops-metric-grid--stacked">
-          {metrics.slice(0, 2).map((item) => (
+          {metrics.slice(0, 3).map((item) => (
             <article key={item.label} className="ops-card">
               <span>{item.label}</span>
               <strong>{item.value}</strong>
@@ -304,7 +352,7 @@ export function AdminWorkspace({ token, isAuthenticated, user }) {
         <div className="native-workspace__group">
           <div className="native-workspace__section-head native-workspace__section-head--tight">
             <h3>上传模型</h3>
-            <p>支持 `.onnx` 主文件，可选标签文件和说明文件。</p>
+            <p>支持 `.onnx` 主文件，可选标签文件和说明文件，适合直接接入识别链路。</p>
           </div>
           <form className="native-form" onSubmit={handleAdminModelUpload}>
             <FileField
@@ -353,7 +401,7 @@ export function AdminWorkspace({ token, isAuthenticated, user }) {
         <div className="native-workspace__group">
           <div className="native-workspace__section-head native-workspace__section-head--tight">
             <h3>导入数据集</h3>
-            <p>直接导入压缩包，导入后可在标注工作区继续编辑和训练。</p>
+            <p>直接导入压缩包，导入后可在标注工位继续编辑、增强和训练。</p>
           </div>
           <form className="native-form" onSubmit={handleDatasetUpload}>
             <FileField
@@ -387,8 +435,8 @@ export function AdminWorkspace({ token, isAuthenticated, user }) {
 
         <div className="native-workspace__group">
           <div className="native-workspace__section-head native-workspace__section-head--tight">
-            <h3>增强脚本</h3>
-            <p>上传 Python 增强脚本，或切回内置增强算法。</p>
+            <h3>上线增强算法</h3>
+            <p>上传 Python 脚本并补齐算法说明、版本和适用数据集类型，让算法切换不再只看文件名。</p>
           </div>
           <form className="native-form" onSubmit={handleAugmentationUpload}>
             <FileField
@@ -397,7 +445,50 @@ export function AdminWorkspace({ token, isAuthenticated, user }) {
               file={augmentationForm.scriptFile}
               onChange={(file) => setAugmentationForm((current) => ({ ...current, scriptFile: file }))}
               buttonLabel="选择脚本"
-            />
+              />
+            <label className="native-field">
+              <span>算法展示名</span>
+              <input
+                value={augmentationForm.displayName}
+                onChange={(event) => setAugmentationForm((current) => ({ ...current, displayName: event.target.value }))}
+                placeholder="例如 玉米叶片增强链路"
+              />
+            </label>
+            <div className="admin-two-column-grid">
+              <label className="native-field">
+                <span>版本号</span>
+                <input
+                  value={augmentationForm.version}
+                  onChange={(event) => setAugmentationForm((current) => ({ ...current, version: event.target.value }))}
+                  placeholder="例如 v1.2"
+                />
+              </label>
+              <label className="native-field">
+                <span>作者</span>
+                <input
+                  value={augmentationForm.author}
+                  onChange={(event) => setAugmentationForm((current) => ({ ...current, author: event.target.value }))}
+                  placeholder="留空则使用当前管理员"
+                />
+              </label>
+            </div>
+            <label className="native-field">
+              <span>适用数据集类型</span>
+              <input
+                value={augmentationForm.datasetTypes}
+                onChange={(event) => setAugmentationForm((current) => ({ ...current, datasetTypes: event.target.value }))}
+                placeholder="例如 玉米, 番茄, 目标检测"
+              />
+            </label>
+            <label className="native-field">
+              <span>算法说明</span>
+              <textarea
+                className="native-textarea"
+                value={augmentationForm.description}
+                onChange={(event) => setAugmentationForm((current) => ({ ...current, description: event.target.value }))}
+                placeholder="说明算法适用作物、增强策略和上线目的"
+              />
+            </label>
             <label className="native-checkbox">
               <input
                 type="checkbox"
@@ -437,8 +528,8 @@ export function AdminWorkspace({ token, isAuthenticated, user }) {
       <div className="native-workspace__panel native-workspace__panel--canvas">
         <div className="native-workspace__section-head">
           <p className="workspace__section-label">Control Board</p>
-          <h3>资源总控</h3>
-          <p>全部资源都在同一页集中展示，减少在旧工作台和新页面之间来回切换。</p>
+          <h3>资源与算法总控</h3>
+          <p>全部资源都在同一页集中展示，尤其把增强算法做成有说明、有适用范围的上架卡片。</p>
         </div>
 
         <div className="ops-metric-grid">
@@ -455,12 +546,114 @@ export function AdminWorkspace({ token, isAuthenticated, user }) {
           <section className="asset-collection asset-collection--wide">
             <div className="asset-collection__head">
               <div>
-                <p className="workspace__section-label">Users</p>
-                <h3>平台用户</h3>
+                <p className="workspace__section-label">Augmentation</p>
+                <h3>增强算法上架台</h3>
               </div>
               <button type="button" className="secondary native-utility-button" onClick={() => runAdminAction("refresh-admin", async () => reloadAdminState("管理员数据已刷新。"))}>
                 刷新
               </button>
+            </div>
+
+            <div className="augmentation-studio">
+              <div className="augmentation-studio__hero">
+                <span>当前聚焦算法</span>
+                <strong>{getAugmentationDisplayName(highlightedAugmentation)}</strong>
+                <p>{highlightedAugmentation?.description || "上传后的增强算法会展示适用数据集类型、版本和说明。"}</p>
+                <div className="augmentation-studio__meta">
+                  <span>{highlightedAugmentation?.version || "未标注版本"}</span>
+                  <span>{highlightedAugmentation?.author || "未标注作者"}</span>
+                  <span>{formatBytes(highlightedAugmentation?.size_bytes || 0)}</span>
+                </div>
+                <div className="augmentation-studio__tags">
+                  {getAugmentationDatasetTypes(highlightedAugmentation).map((item) => (
+                    <span key={item}>{item}</span>
+                  ))}
+                </div>
+              </div>
+
+              <div className="augmentation-studio__controls">
+                <label className="native-field">
+                  <span>快速切换当前增强</span>
+                  <select value={selectedAugmentation} onChange={(event) => setSelectedAugmentation(event.target.value)}>
+                    <option value="">{getAugmentationDisplayName(consoleData?.builtin_augmentation_item)}</option>
+                    {(consoleData?.managed_augmentation_scripts || []).map((item) => (
+                      <option key={item.name} value={item.name}>
+                        {getAugmentationDisplayName(item)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <div className="native-inline-actions">
+                  <button
+                    type="button"
+                    className="primary"
+                    disabled={busyKey === "apply-augmentation"}
+                    onClick={() => runAdminAction("apply-augmentation", async () => {
+                      const payload = await selectAdminAugmentation(token, selectedAugmentation);
+                      setConsoleData(payload?.data || null);
+                      setStatus(payload?.message || "增强脚本已切换。");
+                    })}
+                  >
+                    应用当前选择
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary"
+                    disabled={busyKey === "select-builtin"}
+                    onClick={() => runAdminAction("select-builtin", async () => {
+                      const payload = await selectAdminAugmentation(token);
+                      setConsoleData(payload?.data || null);
+                      setSelectedAugmentation("");
+                      setStatus(payload?.message || "已切回内置增强算法。");
+                    })}
+                  >
+                    切回内置增强
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className="augmentation-card-grid">
+              {augmentationCards.map((script) => (
+                <button
+                  key={script.name}
+                  type="button"
+                  className={`augmentation-card${script.is_active ? " is-active" : ""}${(script.is_builtin ? "" : script.name) === selectedAugmentation ? " is-selected" : ""}`}
+                  onClick={() => setSelectedAugmentation(script.is_builtin ? "" : script.name)}
+                >
+                  <div className="augmentation-card__head">
+                    <div>
+                      <strong>{getAugmentationDisplayName(script)}</strong>
+                      <span>{script.name}</span>
+                    </div>
+                    <div className="asset-row__badges">
+                      {script.is_builtin ? <span className="native-pill native-pill--warm">内置</span> : null}
+                      {script.is_active ? <span className="native-pill native-pill--accent">当前生效</span> : null}
+                    </div>
+                  </div>
+                  <p>{script.description || "未填写算法说明。建议补齐适用数据集、增强策略和上线目的。"}</p>
+                  <div className="augmentation-card__meta">
+                    <span>{script.version || "未标注版本"}</span>
+                    <span>{script.author || "未标注作者"}</span>
+                    <span>{formatDate(script.uploaded_at)}</span>
+                  </div>
+                  <div className="augmentation-card__tags">
+                    {getAugmentationDatasetTypes(script).map((item) => (
+                      <span key={`${script.name}-${item}`}>{item}</span>
+                    ))}
+                  </div>
+                </button>
+              ))}
+            </div>
+          </section>
+
+          <section className="asset-collection asset-collection--wide">
+            <div className="asset-collection__head">
+              <div>
+                <p className="workspace__section-label">Users</p>
+                <h3>平台用户</h3>
+              </div>
+              <span className="native-pill native-pill--neutral">{users.length} 个账号</span>
             </div>
             {!users.length ? (
               <div className="native-empty native-empty--compact">
@@ -666,65 +859,6 @@ export function AdminWorkspace({ token, isAuthenticated, user }) {
                           删除
                         </button>
                       ) : null}
-                    </div>
-                  </article>
-                ))}
-              </div>
-            )}
-          </section>
-
-          <section className="asset-collection">
-            <div className="asset-collection__head">
-              <div>
-                <p className="workspace__section-label">Augmentation</p>
-                <h3>增强脚本</h3>
-              </div>
-              <span className="native-pill native-pill--neutral">
-                {consoleData?.active_augmentation_script || consoleData?.builtin_augmentation_script || "--"}
-              </span>
-            </div>
-            <div className="native-field">
-              <span>快速切换</span>
-              <select
-                value={selectedAugmentation}
-                onChange={(event) => setSelectedAugmentation(event.target.value)}
-              >
-                <option value="">内置增强算法</option>
-                {(consoleData?.managed_augmentation_scripts || []).map((item) => (
-                  <option key={item.name} value={item.name}>
-                    {item.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="native-inline-actions">
-              <button
-                type="button"
-                className="secondary"
-                disabled={busyKey === "apply-augmentation"}
-                onClick={() => runAdminAction("apply-augmentation", async () => {
-                  const payload = await selectAdminAugmentation(token, selectedAugmentation);
-                  setConsoleData(payload?.data || null);
-                  setStatus(payload?.message || "增强脚本已切换。");
-                })}
-              >
-                应用当前选择
-              </button>
-            </div>
-            {!consoleData?.managed_augmentation_scripts?.length ? (
-              <div className="native-empty native-empty--compact">
-                <p>还没有外部增强脚本，当前使用内置增强。</p>
-              </div>
-            ) : (
-              <div className="asset-list asset-list--compact">
-                {consoleData.managed_augmentation_scripts.map((script) => (
-                  <article key={script.name} className={`asset-row asset-row--compact${script.is_active ? " is-active" : ""}`}>
-                    <div className="asset-row__main">
-                      <div className="asset-row__title">
-                        <strong>{script.name}</strong>
-                        {script.is_active ? <span className="native-pill native-pill--accent">当前脚本</span> : null}
-                      </div>
-                      <p>{formatBytes(script.size_bytes)} · {formatDate(script.uploaded_at)}</p>
                     </div>
                   </article>
                 ))}

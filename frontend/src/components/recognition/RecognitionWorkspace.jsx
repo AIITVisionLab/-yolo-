@@ -67,11 +67,11 @@ const LIVE_VIDEO_CONSTRAINTS = {
 const PICTURE_IN_PICTURE_STYLES = `
   :root {
     color-scheme: light;
-    font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-family: "Avenir Next", "PingFang SC", "Microsoft YaHei", sans-serif;
     background:
-      radial-gradient(circle at top right, rgba(151, 196, 166, 0.24), transparent 28%),
-      linear-gradient(180deg, #eef5ec 0%, #f8fbf7 100%);
-    color: #203526;
+      radial-gradient(circle at top right, rgba(184, 136, 85, 0.16), transparent 24%),
+      linear-gradient(180deg, #141f19 0%, #1e2d24 100%);
+    color: #f2ede4;
   }
 
   * {
@@ -85,7 +85,7 @@ const PICTURE_IN_PICTURE_STYLES = `
   }
 
   body {
-    padding: 16px;
+    padding: 14px;
     background: inherit;
     color: inherit;
   }
@@ -97,41 +97,42 @@ const PICTURE_IN_PICTURE_STYLES = `
 
   .recognition-pip {
     display: grid;
-    gap: 14px;
+    gap: 12px;
   }
 
   .recognition-pip__status {
-    padding: 12px 14px;
-    border-radius: 18px;
-    background: rgba(226, 239, 225, 0.96);
-    color: #245434;
+    padding: 12px 13px;
+    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    color: rgba(242, 237, 228, 0.9);
     line-height: 1.6;
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6);
   }
 
   .recognition-pip__status.is-error {
-    background: rgba(173, 75, 58, 0.12);
-    color: #943f31;
+    background: rgba(173, 75, 58, 0.16);
+    color: #ffdacc;
   }
 
   .recognition-pip__panel,
   .recognition-pip__metric {
-    border-radius: 24px;
-    border: 1px solid rgba(34, 77, 49, 0.08);
-    background: rgba(255, 255, 255, 0.88);
-    box-shadow: 0 18px 34px rgba(30, 63, 35, 0.08);
+    border-radius: 20px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
   }
 
   .recognition-pip__panel {
     display: grid;
-    gap: 14px;
-    padding: 16px;
+    gap: 12px;
+    padding: 14px;
+    background:
+      radial-gradient(circle at top right, rgba(184, 136, 85, 0.12), transparent 28%),
+      linear-gradient(180deg, rgba(24, 37, 30, 0.96), rgba(31, 46, 37, 0.94));
   }
 
   .recognition-pip__panel--hero {
     background:
-      radial-gradient(circle at top right, rgba(151, 196, 166, 0.18), transparent 28%),
-      rgba(255, 255, 255, 0.9);
+      radial-gradient(circle at top right, rgba(199, 154, 102, 0.14), transparent 28%),
+      linear-gradient(180deg, rgba(28, 41, 33, 0.98), rgba(22, 33, 27, 0.96));
   }
 
   .recognition-pip__hero,
@@ -147,58 +148,70 @@ const PICTURE_IN_PICTURE_STYLES = `
   .recognition-pip__hero span,
   .recognition-pip__section-head span,
   .recognition-pip__analysis-meta {
-    color: #5d7260;
+    color: rgba(242, 237, 228, 0.58);
     font-size: 12px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
   }
 
   .recognition-pip__hero strong,
   .recognition-pip__section-head strong {
     display: block;
     margin-top: 4px;
-    font-size: 18px;
-    color: #203526;
+    font-size: 17px;
+    color: #f3eee6;
   }
 
   .recognition-pip__close {
-    min-height: 38px;
+    min-height: 36px;
     padding: 0 14px;
     border: 0;
     border-radius: 999px;
-    background: linear-gradient(135deg, #245f43 0%, #143524 100%);
-    color: #f4fbf2;
+    background: linear-gradient(135deg, #c79a66 0%, #ad7744 100%);
+    color: #18211c;
     cursor: pointer;
+    font-weight: 700;
   }
 
   .recognition-pip__threshold {
     display: grid;
     gap: 8px;
     padding: 12px;
-    border-radius: 18px;
-    background: rgba(243, 247, 241, 0.96);
+    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.06);
   }
 
   .recognition-pip__threshold strong {
-    color: #245434;
+    color: #f4efe6;
   }
 
   .recognition-pip__threshold input {
     width: 100%;
     margin: 0;
-    accent-color: #2b714d;
+    accent-color: #c79a66;
   }
 
   .recognition-pip__preview {
     position: relative;
     overflow: hidden;
-    border-radius: 22px;
-    background: rgba(15, 27, 21, 0.94);
+    border-radius: 18px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background:
+      repeating-linear-gradient(
+        90deg,
+        rgba(255, 255, 255, 0.04) 0,
+        rgba(255, 255, 255, 0.04) 1px,
+        transparent 1px,
+        transparent 64px
+      ),
+      linear-gradient(180deg, rgba(12, 19, 15, 0.98), rgba(18, 27, 22, 0.96));
   }
 
   .recognition-pip__preview img {
     display: block;
     width: 100%;
     height: auto;
-    max-height: 280px;
+    max-height: 250px;
     object-fit: contain;
   }
 
@@ -211,12 +224,11 @@ const PICTURE_IN_PICTURE_STYLES = `
     position: absolute;
     display: grid;
     align-content: space-between;
-    padding: 8px;
-    border-radius: 16px;
-    border: 2px solid rgba(215, 246, 165, 0.95);
-    background: rgba(140, 194, 104, 0.08);
+    padding: 7px;
+    border-radius: 14px;
+    border: 2px solid rgba(216, 188, 137, 0.96);
+    background: rgba(199, 154, 102, 0.12);
     color: #f7fff3;
-    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
   }
 
   .recognition-pip__box em {
@@ -229,40 +241,41 @@ const PICTURE_IN_PICTURE_STYLES = `
     padding: 2px 7px;
     border-radius: 999px;
     font-size: 11px;
-    background: rgba(12, 26, 19, 0.72);
+    background: rgba(11, 17, 14, 0.78);
   }
 
   .recognition-pip__empty,
   .recognition-pip__list-empty {
-    padding: 16px;
-    border-radius: 18px;
-    border: 1px dashed rgba(34, 77, 49, 0.14);
-    background: rgba(244, 248, 241, 0.88);
-    color: #5d7260;
+    padding: 14px;
+    border-radius: 16px;
+    border: 1px dashed rgba(255, 255, 255, 0.12);
+    background: rgba(255, 255, 255, 0.04);
+    color: rgba(242, 237, 228, 0.62);
     line-height: 1.7;
   }
 
   .recognition-pip__metrics {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
-    gap: 12px;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 10px;
   }
 
   .recognition-pip__metric {
     display: grid;
     gap: 4px;
-    padding: 16px;
+    padding: 14px;
+    background: rgba(255, 255, 255, 0.05);
   }
 
   .recognition-pip__metric span,
   .recognition-pip__metric p {
     margin: 0;
-    color: #5d7260;
+    color: rgba(242, 237, 228, 0.58);
   }
 
   .recognition-pip__metric strong {
-    font-size: 18px;
-    color: #203526;
+    font-size: 17px;
+    color: #f4efe6;
     word-break: break-word;
   }
 
@@ -279,15 +292,24 @@ const PICTURE_IN_PICTURE_STYLES = `
   }
 
   .recognition-pip__list-item {
-    padding: 12px 14px;
-    border-radius: 18px;
-    background: rgba(244, 248, 241, 0.88);
+    padding: 12px 13px;
+    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.05);
   }
 
   .recognition-pip__list-item strong,
   .recognition-pip__list-item span,
   .recognition-pip__analysis p {
     margin: 0;
+  }
+
+  .recognition-pip__list-item strong {
+    color: #f2ede4;
+  }
+
+  .recognition-pip__list-item span,
+  .recognition-pip__analysis p {
+    color: rgba(242, 237, 228, 0.66);
   }
 
   .recognition-pip__list-item--stacked {
