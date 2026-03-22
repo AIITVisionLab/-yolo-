@@ -2165,3 +2165,262 @@
     padding: 12px;
   }
 }
+
+/* Roboflow-inspired panel layout */
+.workspace__main .native-workspace--recognition,
+.workspace__main .native-workspace--annotation {
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 14px;
+}
+
+.workspace__main .native-workspace--recognition .native-workspace__panel--canvas,
+.workspace__main .native-workspace--annotation .native-workspace__panel--canvas {
+  order: 1;
+}
+
+.workspace__main .native-workspace--recognition .native-workspace__panel--controls,
+.workspace__main .native-workspace--annotation .native-workspace__panel--controls {
+  order: 2;
+}
+
+.workspace__main .native-workspace__panel--controls {
+  position: static;
+  background:
+    radial-gradient(circle at top right, rgba(187, 138, 87, 0.08), transparent 28%),
+    linear-gradient(180deg, rgba(249, 244, 236, 0.98), rgba(242, 237, 228, 0.96));
+  border-color: rgba(29, 44, 35, 0.08);
+  box-shadow: 0 14px 30px rgba(19, 29, 23, 0.06);
+  color: var(--surface-ink);
+}
+
+.workspace__main .native-workspace__panel--controls .native-workspace__section-head h3,
+.workspace__main .native-workspace__panel--controls .native-workspace__section-head p,
+.workspace__main .native-workspace__panel--controls .workspace__section-label,
+.workspace__main .native-workspace__panel--controls .native-hint,
+.workspace__main .native-workspace__panel--controls .native-field span,
+.workspace__main .native-workspace__panel--controls .native-checkbox,
+.workspace__main .native-workspace__panel--controls .native-pill,
+.workspace__main .native-workspace__panel--controls .annotation-sidebar__section-head h4,
+.workspace__main .native-workspace__panel--controls .annotation-sidebar__section-head .workspace__section-label,
+.workspace__main .native-workspace__panel--controls .asset-collection__head p,
+.workspace__main .native-workspace__panel--controls .asset-collection__head h3 {
+  color: var(--surface-ink);
+}
+
+.workspace__main .native-workspace__panel--controls .native-workspace__section-head p:last-child,
+.workspace__main .native-workspace__panel--controls .native-hint,
+.workspace__main .native-workspace__panel--controls .annotation-template-card p,
+.workspace__main .native-workspace__panel--controls .annotation-template-card__head span,
+.workspace__main .native-workspace__panel--controls .annotation-clone-card p,
+.workspace__main .native-workspace__panel--controls .annotation-template-summary p,
+.workspace__main .native-workspace__panel--controls .annotation-advice-card__meta,
+.workspace__main .native-workspace__panel--controls .annotation-advice-card p,
+.workspace__main .native-workspace__panel--controls .annotation-dataset-overview__card span,
+.workspace__main .native-workspace__panel--controls .annotation-sidebar__stat span,
+.workspace__main .native-workspace__panel--controls .native-feedback p,
+.workspace__main .native-workspace__panel--controls .ops-card p {
+  color: var(--muted);
+}
+
+.workspace__main .native-workspace__panel--controls .native-workspace__group {
+  border-top-color: rgba(29, 44, 35, 0.08);
+}
+
+.workspace__main .native-workspace__panel--controls .primary {
+  color: #f4efe6;
+  background: linear-gradient(135deg, #395c48 0%, #203126 100%);
+  box-shadow: none;
+}
+
+.workspace__main .native-workspace__panel--controls .secondary,
+.workspace__main .native-workspace__panel--controls .native-link,
+.workspace__main .native-workspace__panel--controls .native-tablist__item,
+.workspace__main .native-workspace__panel--controls .annotation-mode-switch__item,
+.workspace__main .native-workspace__panel--controls .native-file-field__button {
+  color: var(--surface-ink);
+  background: rgba(255, 250, 244, 0.82);
+  border: 1px solid rgba(29, 44, 35, 0.08);
+}
+
+.workspace__main .native-workspace__panel--controls .native-tablist__item.is-active,
+.workspace__main .native-workspace__panel--controls .annotation-mode-switch__item.is-active {
+  color: #f4efe6;
+  background: linear-gradient(135deg, #395c48 0%, #203126 100%);
+}
+
+.workspace__main .native-workspace__panel--controls .native-field input,
+.workspace__main .native-workspace__panel--controls .native-field select,
+.workspace__main .native-workspace__panel--controls .native-field textarea,
+.workspace__main .native-workspace__panel--controls .native-inline-actions input,
+.workspace__main .native-workspace__panel--controls .annotation-focus__quick-input,
+.workspace__main .native-workspace__panel--controls .native-file-field__surface {
+  color: var(--surface-ink);
+  background: rgba(255, 250, 244, 0.84);
+  border-color: rgba(29, 44, 35, 0.08);
+}
+
+.workspace__main .native-workspace__panel--controls .native-field input::placeholder,
+.workspace__main .native-workspace__panel--controls .native-inline-actions input::placeholder {
+  color: rgba(93, 108, 96, 0.58);
+}
+
+.workspace__main .native-workspace__panel--controls .native-field input[type="range"] {
+  accent-color: #395c48;
+}
+
+.workspace__main .native-workspace__panel--controls .native-feedback {
+  background: rgba(244, 239, 231, 0.86);
+  border-color: rgba(29, 44, 35, 0.08);
+}
+
+.workspace__main .native-workspace__panel--controls .native-pill--accent {
+  color: #f4efe6;
+  background: linear-gradient(135deg, #395c48 0%, #203126 100%);
+}
+
+.workspace__main .native-workspace__panel--controls .native-pill--warm {
+  color: #1a231d;
+  background: linear-gradient(135deg, #d0a774 0%, #bb8652 100%);
+}
+
+.workspace__main .native-workspace__panel--controls .native-pill--neutral,
+.workspace__main .native-workspace__panel--controls .native-pill--critical {
+  color: var(--surface-ink);
+  background: rgba(31, 45, 36, 0.06);
+}
+
+@media (max-width: 1180px) {
+  .workspace__main .native-workspace--recognition,
+  .workspace__main .native-workspace--annotation {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Roboflow visual pass */
+.workspace__main .native-workspace__panel {
+  background: #ffffff;
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  box-shadow: none;
+}
+
+.workspace__main .native-workspace__panel--canvas,
+.workspace__main .native-workspace__panel--controls {
+  background: #ffffff;
+}
+
+.workspace__main .native-workspace__section-head h3,
+.workspace__main .asset-collection__head h3,
+.workspace__main .annotation-context-card h4,
+.workspace__main .annotation-sidebar__section-head h4 {
+  font-family: var(--font-body);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  color: #111827;
+}
+
+.workspace__main .native-workspace__section-head p:last-child,
+.workspace__main .asset-collection__head p,
+.workspace__main .annotation-context-card p,
+.workspace__main .recognition-advice__meta,
+.workspace__main .recognition-result-card p,
+.workspace__main .ops-card p,
+.workspace__main .guide-card p,
+.workspace__main .annotation-advice-card p,
+.workspace__main .annotation-advice-card__meta {
+  color: #6b7280;
+}
+
+.workspace__main .recognition-stage__toolbar,
+.workspace__main .annotation-toolbar,
+.workspace__main .annotation-stage__caption,
+.workspace__main .annotation-focus__toolbar {
+  background: #fbfbfd;
+  border: 1px solid rgba(17, 24, 39, 0.08);
+}
+
+.workspace__main .recognition-stage__mode,
+.workspace__main .annotation-mode-switch__item,
+.workspace__main .native-tablist__item {
+  background: #ffffff;
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  color: #4b5563;
+}
+
+.workspace__main .recognition-stage__mode.is-active,
+.workspace__main .annotation-mode-switch__item.is-active,
+.workspace__main .native-tablist__item.is-active {
+  background: rgba(111, 93, 183, 0.12);
+  border-color: rgba(111, 93, 183, 0.26);
+  color: #5b4ca1;
+}
+
+.workspace__main .recognition-result-card,
+.workspace__main .ops-card,
+.workspace__main .guide-card,
+.workspace__main .annotation-dataset-overview__card,
+.workspace__main .annotation-ops-banner__card,
+.workspace__main .annotation-context-card,
+.workspace__main .annotation-focus__summary,
+.workspace__main .admin-user-card,
+.workspace__main .augmentation-studio__hero,
+.workspace__main .augmentation-studio__controls,
+.workspace__main .augmentation-card,
+.workspace__main .asset-collection,
+.workspace__main .native-list__item,
+.workspace__main .annotation-template-card,
+.workspace__main .annotation-clone-card,
+.workspace__main .annotation-template-summary,
+.workspace__main .annotation-advice-card,
+.workspace__main .annotation-sidebar__stat {
+  background: #ffffff;
+  border: 1px solid rgba(17, 24, 39, 0.08);
+}
+
+.workspace__main .native-empty {
+  background: #fbfbfd;
+  border: 1px dashed rgba(17, 24, 39, 0.12);
+  color: #6b7280;
+}
+
+.workspace__main .native-video-box,
+.workspace__main .recognition-stage,
+.workspace__main .annotation-stage {
+  border-radius: 14px;
+  border: 1px solid rgba(17, 24, 39, 0.1);
+  background: #141b2d;
+}
+
+.workspace__main .recognition-stage.is-heatmap {
+  background: #141b2d;
+}
+
+.workspace__main .recognition-box,
+.workspace__main .annotation-box {
+  border-color: rgba(111, 93, 183, 0.8);
+  background: rgba(111, 93, 183, 0.1);
+}
+
+.workspace__main .recognition-attention__card {
+  background: #ffffff;
+  border: 1px solid rgba(17, 24, 39, 0.08);
+}
+
+.workspace__main .recognition-attention__top span {
+  color: #5b4ca1;
+  background: rgba(111, 93, 183, 0.1);
+}
+
+.workspace__main .recognition-attention__top strong {
+  background: #5b4ca1;
+}
+
+.workspace__main .recognition-attention__track,
+.workspace__main .recognition-attention__layer-track {
+  background: rgba(111, 93, 183, 0.08);
+}
+
+.workspace__main .recognition-attention__track span,
+.workspace__main .recognition-attention__layer-track span,
+.workspace__main .train-progress__bar span {
+  background: linear-gradient(90deg, #7f6ac9 0%, #5b4ca1 100%);
+}

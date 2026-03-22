@@ -7,6 +7,7 @@ export const WORKSPACES = [
   {
     id: "recognition",
     label: "病害识别",
+    navGlyph: "R",
     group: "flow",
     groupLabel: "主流程",
     step: "01",
@@ -19,6 +20,7 @@ export const WORKSPACES = [
   {
     id: "annotation",
     label: "标注与训练",
+    navGlyph: "A",
     group: "flow",
     groupLabel: "主流程",
     step: "02",
@@ -31,6 +33,7 @@ export const WORKSPACES = [
   {
     id: "details",
     label: "模型资产",
+    navGlyph: "M",
     group: "support",
     groupLabel: "其他功能",
     step: "03",
@@ -43,6 +46,7 @@ export const WORKSPACES = [
   {
     id: "admin",
     label: "平台管理",
+    navGlyph: "S",
     group: "support",
     groupLabel: "其他功能",
     step: "04",

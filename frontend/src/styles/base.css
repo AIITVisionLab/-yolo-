@@ -196,9 +196,7 @@ code {
 /* Console redesign */
 body {
   background:
-    radial-gradient(circle at top right, rgba(41, 61, 49, 0.12), transparent 22%),
-    radial-gradient(circle at top left, rgba(187, 138, 87, 0.08), transparent 18%),
-    linear-gradient(180deg, #ddd8cd 0%, #eee8df 24%, #f4efe7 100%);
+    linear-gradient(180deg, #f7f8fc 0%, #eff2f7 100%);
 }
 
 .app-shell {
@@ -207,22 +205,22 @@ body {
 
 .app-shell::before {
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.12), transparent 24%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.08), transparent 24%),
     repeating-linear-gradient(
       90deg,
-      rgba(32, 49, 39, 0.05) 0,
-      rgba(32, 49, 39, 0.05) 1px,
+      rgba(76, 86, 109, 0.02) 0,
+      rgba(76, 86, 109, 0.02) 1px,
       transparent 1px,
       transparent 96px
     ),
     repeating-linear-gradient(
       180deg,
-      rgba(32, 49, 39, 0.04) 0,
-      rgba(32, 49, 39, 0.04) 1px,
+      rgba(76, 86, 109, 0.02) 0,
+      rgba(76, 86, 109, 0.02) 1px,
       transparent 1px,
       transparent 96px
     );
-  opacity: 0.18;
+  opacity: 0.08;
 }
 
 .app-shell::after {
@@ -231,8 +229,7 @@ body {
   inset: 0;
   pointer-events: none;
   background:
-    radial-gradient(circle at 50% -12%, rgba(17, 27, 21, 0.18), transparent 34%),
-    radial-gradient(circle at 100% 100%, rgba(187, 138, 87, 0.08), transparent 22%);
+    radial-gradient(circle at 0% 100%, rgba(111, 93, 183, 0.06), transparent 22%);
 }
 
 .primary,
@@ -246,9 +243,9 @@ body {
 }
 
 .primary {
-  color: #f7f1e7;
-  background: linear-gradient(135deg, #395c48 0%, #1e3026 100%);
-  box-shadow: 0 14px 30px rgba(30, 48, 38, 0.18);
+  color: #fff;
+  background: linear-gradient(135deg, #725fbc 0%, #5b4ca1 100%);
+  box-shadow: 0 10px 22px rgba(111, 93, 183, 0.2);
 }
 
 .primary:hover,
@@ -258,8 +255,8 @@ body {
 
 .secondary {
   color: var(--surface-ink);
-  background: rgba(248, 242, 232, 0.78);
-  border: 1px solid rgba(27, 40, 31, 0.1);
+  background: rgba(255, 255, 255, 0.86);
+  border: 1px solid rgba(17, 24, 39, 0.1);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45);
 }
 
@@ -295,11 +292,11 @@ body {
   width: 42px;
   height: 42px;
   border-radius: 14px;
-  color: #f2efe7;
+  color: #f4f5fb;
   background:
-    linear-gradient(135deg, rgba(187, 138, 87, 0.18), transparent 70%),
-    linear-gradient(160deg, #304c3d 0%, #1a2b22 100%);
-  box-shadow: 0 12px 26px rgba(17, 27, 21, 0.22);
+    linear-gradient(135deg, rgba(133, 113, 205, 0.18), transparent 70%),
+    linear-gradient(160deg, #2b3152 0%, #1a2039 100%);
+  box-shadow: 0 12px 26px rgba(36, 34, 77, 0.18);
 }
 
 .brand-mark__glyph svg {

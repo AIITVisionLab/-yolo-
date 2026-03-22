@@ -63,7 +63,6 @@ function App() {
     const params = new URLSearchParams(window.location.search);
     return getWorkspaceMeta(params.get("workspace") || DEFAULT_WORKSPACE).id;
   });
-  const [supportToolsOpen, setSupportToolsOpen] = useState(() => getWorkspaceMeta(workspace).group !== "flow");
 
   useEffect(() => {
     if (!session.isAuthenticated) {
@@ -153,12 +152,6 @@ function App() {
     : isAuthenticated
       ? (session.user?.role === "admin" ? "管理员会话" : "用户会话")
       : "未登录";
-
-  useEffect(() => {
-    if (workspaceMeta.group !== "flow") {
-      setSupportToolsOpen(true);
-    }
-  }, [workspaceMeta.group]);
 
   function openAuth(nextMode = "login") {
     setAuthMode(nextMode);
@@ -307,199 +300,185 @@ function App() {
 
   return (
     <div className="app-shell">
-      <header className="topbar">
-        <BrandMark compact />
-        <div className="topbar__statusline" aria-label="系统状态">
-          <span className={`status-pill status-pill--${getHealthTone(health)}`}>
-            {getHealthSummary(health)}
-          </span>
-          <span className="status-pill">{getModelSummary(health)}</span>
-          <span className="status-pill status-pill--ghost">{getApiBaseLabel()}</span>
-        </div>
-        <div className="topbar__actions">
-          {isAuthenticated ? (
-            <>
-              <div className="topbar__user">
-                <strong>{session.user?.display_name || session.user?.username || "已登录"}</strong>
-                <span>{session.user?.role === "admin" ? "管理员" : "普通用户"}</span>
-              </div>
-              <button
-                type="button"
-                className="secondary"
-                onClick={async () => {
-                  await session.logout();
-                  setWorkspace(DEFAULT_WORKSPACE);
-                }}
-              >
-                退出登录
-              </button>
-            </>
-          ) : (
-            <>
-              <button type="button" className="secondary" onClick={() => openAuth("login")}>
-                登录
-              </button>
-              <button type="button" className="primary" onClick={() => openAuth("register")}>
-                注册
-              </button>
-            </>
-          )}
-        </div>
-      </header>
+      {!isAuthenticated ? (
+        <header className="topbar">
+          <BrandMark compact />
+          <div className="topbar__statusline" aria-label="系统状态">
+            <span className={`status-pill status-pill--${getHealthTone(health)}`}>
+              {getHealthSummary(health)}
+            </span>
+            <span className="status-pill">{getModelSummary(health)}</span>
+            <span className="status-pill status-pill--ghost">{getApiBaseLabel()}</span>
+          </div>
+          <div className="topbar__actions">
+            <button type="button" className="secondary" onClick={() => openAuth("login")}>
+              登录
+            </button>
+            <button type="button" className="primary" onClick={() => openAuth("register")}>
+              注册
+            </button>
+          </div>
+        </header>
+      ) : null}
 
       {isAuthenticated ? (
-        <main className="workspace workspace--editorial">
-          <aside className="workspace__rail">
-            <div className="workspace__rail-group">
-              <div className="workspace__rail-head">
-                <div>
-                  <p className="workspace__rail-label">主流程</p>
-                  <p className="workspace__rail-note">先识别，再沉淀成训练数据。</p>
-                </div>
-                <span className="workspace__rail-badge">Core Flow</span>
+        <div className="workspace-layout">
+          <aside className="workspace__rail workspace__rail--sidebar">
+            <div className="workspace__brandpanel">
+              <BrandMark />
+              <div className="workspace__brandmeta">
+                <span>Computer Vision Ops</span>
+                <strong>{APP_NAME}</strong>
               </div>
-              <WorkspaceNav
-                items={flowWorkspaces}
-                activeWorkspace={activeWorkspace}
-                onChangeWorkspace={handleWorkspaceChange}
-                canShowAdmin={canShowAdmin}
-                layout="stacked"
-              />
             </div>
 
-            {supportWorkspaces.length ? (
-              <div className={`workspace__rail-group workspace__rail-group--secondary${supportToolsOpen ? " is-open" : ""}`}>
-                <button
-                  type="button"
-                  className="workspace__toggle"
-                  onClick={() => setSupportToolsOpen((current) => !current)}
-                  aria-expanded={supportToolsOpen}
-                >
-                  <span className="workspace__toggle-copy">
-                    <span className="workspace__rail-label">其他功能</span>
-                    <strong>模型资产与平台管理</strong>
-                  </span>
-                  <small>{supportToolsOpen ? "收起" : "展开"}</small>
-                </button>
-                {supportToolsOpen ? (
+            <div className="workspace__sidebar-meta">
+              <strong>{session.user?.display_name || session.user?.username || APP_NAME}</strong>
+              <span>{canShowAdmin ? "Admin Workspace" : "Project Workspace"}</span>
+            </div>
+
+            <div className="workspace__sidebar-nav">
+              <div className="workspace__sidebar-section">
+                <p className="workspace__sidebar-label">导航</p>
+                <WorkspaceNav
+                  items={flowWorkspaces}
+                  activeWorkspace={activeWorkspace}
+                  onChangeWorkspace={handleWorkspaceChange}
+                  canShowAdmin={canShowAdmin}
+                  layout="sidebar"
+                />
+              </div>
+
+              {supportWorkspaces.length ? (
+                <div className="workspace__sidebar-section">
+                  <p className="workspace__sidebar-label">资源</p>
                   <WorkspaceNav
                     items={supportWorkspaces}
                     activeWorkspace={activeWorkspace}
                     onChangeWorkspace={handleWorkspaceChange}
                     canShowAdmin={canShowAdmin}
-                    layout="stacked"
+                    layout="sidebar"
                   />
-                ) : (
-                  <p className="workspace__rail-note">
-                    模型、资源和管理员总控都放在这里，不再和主流程抢视觉重点。
-                  </p>
-                )}
-              </div>
-            ) : null}
-
-            <div className="workspace__rail-group">
-              <p className="workspace__rail-label">当前重点</p>
-              <div className="workspace__rail-highlight">
-                <strong>{workspaceMeta.focusTitle || workspaceMeta.label}</strong>
-                <p>{workspaceMeta.focusSummary || workspaceMeta.summary}</p>
-              </div>
-              <div className="workspace__chip-list">
-                {(workspaceMeta.highlights || []).map((item) => (
-                  <span key={item}>{item}</span>
-                ))}
-              </div>
+                </div>
+              ) : null}
             </div>
 
-            <div className="workspace__rail-group">
-              <p className="workspace__rail-label">运行状态</p>
-              <div className="workspace__mini-stats">
-                <article className="workspace__mini-stat">
-                  <span>服务</span>
-                  <strong>{getHealthSummary(health)}</strong>
-                </article>
-                <article className="workspace__mini-stat">
-                  <span>模型</span>
-                  <strong>{health.state === "online" ? (health.data?.current_model || "--") : "--"}</strong>
-                </article>
-                <article className="workspace__mini-stat">
-                  <span>会话</span>
-                  <strong>{sessionSummary}</strong>
-                </article>
-                <article className="workspace__mini-stat">
-                  <span>数据集</span>
-                  <strong>{session.user?.dataset_count ?? 0}</strong>
-                </article>
+            <div className="workspace__sidebar-card">
+              <span>当前重点</span>
+              <strong>{workspaceMeta.focusTitle || workspaceMeta.label}</strong>
+              <p>{workspaceMeta.focusSummary || workspaceMeta.summary}</p>
+            </div>
+
+            <div className="workspace__sidebar-bottom">
+              <div className="workspace__sidebar-usage">
+                <span>服务</span>
+                <strong>{getHealthSummary(health)}</strong>
+              </div>
+              <div className="workspace__sidebar-usage">
+                <span>模型</span>
+                <strong>{health.state === "online" ? (health.data?.current_model || "--") : "--"}</strong>
+              </div>
+              <div className="workspace__sidebar-usage">
+                <span>会话</span>
+                <strong>{sessionSummary}</strong>
+              </div>
+              <div className="workspace__sidebar-usage">
+                <span>数据集</span>
+                <strong>{session.user?.dataset_count ?? 0}</strong>
               </div>
             </div>
           </aside>
 
-          <section className="workspace__main">
-            <section className="workspace__masthead">
-              <div className="workspace__masthead-copy">
-                <p className="eyebrow">{workspaceMeta.groupLabel || "Workspace"}</p>
-                <h1>{workspaceMeta.label}</h1>
-                <p className="workspace__masthead-intro">{workspaceSummary}</p>
-                <div className="workspace__hero-actions">
-                  {activeWorkspace === "recognition" ? (
-                    <button type="button" className="primary" onClick={() => handleWorkspaceChange("annotation")}>
-                      {recognitionPayload ? "继续标注与训练" : "进入标注与训练"}
-                    </button>
-                  ) : (
-                    <button type="button" className="primary" onClick={() => handleWorkspaceChange("recognition")}>
-                      回到识别页
-                    </button>
-                  )}
-                  {activeWorkspace === "details" && canShowAdmin ? (
-                    <button type="button" className="secondary" onClick={() => handleWorkspaceChange("admin")}>
-                      打开平台管理
-                    </button>
-                  ) : activeWorkspace !== "details" ? (
-                    <button type="button" className="secondary" onClick={() => handleWorkspaceChange("details")}>
-                      查看模型资产
-                    </button>
-                  ) : null}
+          <section className="workspace__stage">
+            <header className="topbar topbar--workspace">
+              <div className="topbar__statusline" aria-label="系统状态">
+                <span className={`status-pill status-pill--${getHealthTone(health)}`}>
+                  {getHealthSummary(health)}
+                </span>
+                <span className="status-pill">{getModelSummary(health)}</span>
+                <span className="status-pill status-pill--ghost">{getApiBaseLabel()}</span>
+              </div>
+              <div className="topbar__actions">
+                <div className="topbar__user">
+                  <strong>{session.user?.display_name || session.user?.username || "已登录"}</strong>
+                  <span>{session.user?.role === "admin" ? "管理员" : "普通用户"}</span>
                 </div>
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={async () => {
+                    await session.logout();
+                    setWorkspace(DEFAULT_WORKSPACE);
+                  }}
+                >
+                  退出登录
+                </button>
               </div>
+            </header>
 
-              <article className="workspace__briefing">
-                <div className="workspace__briefing-top">
-                  <span className="workspace__briefing-step">{workspaceMeta.step || "--"}</span>
-                  <span className={`workspace__briefing-tag${workspaceMeta.group === "flow" ? " is-flow" : ""}`}>
-                    {workspaceMeta.groupLabel || "工作区"}
-                  </span>
+            <main className="workspace__main">
+              <section className="workspace__pagebar">
+                <div className="workspace__pagebar-copy">
+                  <p className="workspace__pagebar-kicker">
+                    {workspaceMeta.groupLabel || "Workspace"} / {workspaceMeta.step || "--"}
+                  </p>
+                  <h1>{workspaceMeta.label}</h1>
+                  <p>{workspaceSummary}</p>
                 </div>
-                <strong>{workspaceMeta.focusTitle || workspaceMeta.label}</strong>
-                <p>{workspaceMeta.focusSummary || workspaceMeta.summary}</p>
-                <ul className="workspace__briefing-list">
-                  {(workspaceMeta.highlights || []).map((item) => (
-                    <li key={item}>{item}</li>
-                  ))}
-                </ul>
-              </article>
-            </section>
 
-            <section className="workspace__facts" aria-label="工作区摘要">
-              <div className="workspace__fact">
-                <span>当前模块</span>
-                <strong>{workspaceMeta.label}</strong>
-              </div>
-              <div className="workspace__fact">
-                <span>当前角色</span>
-                <strong>{sessionSummary}</strong>
-              </div>
-              <div className="workspace__fact">
-                <span>在线模型</span>
-                <strong>{health.state === "online" ? (health.data?.current_model || "--") : "--"}</strong>
-              </div>
-              <div className="workspace__fact">
-                <span>接口入口</span>
-                <strong>{getApiBaseLabel()}</strong>
-              </div>
-            </section>
+                <div className="workspace__pagebar-side">
+                  <div className="workspace__hero-actions">
+                    {activeWorkspace === "recognition" ? (
+                      <button type="button" className="primary" onClick={() => handleWorkspaceChange("annotation")}>
+                        {recognitionPayload ? "继续标注与训练" : "进入标注与训练"}
+                      </button>
+                    ) : (
+                      <button type="button" className="primary" onClick={() => handleWorkspaceChange("recognition")}>
+                        回到识别页
+                      </button>
+                    )}
+                    {activeWorkspace === "details" && canShowAdmin ? (
+                      <button type="button" className="secondary" onClick={() => handleWorkspaceChange("admin")}>
+                        打开平台管理
+                      </button>
+                    ) : activeWorkspace !== "details" ? (
+                      <button type="button" className="secondary" onClick={() => handleWorkspaceChange("details")}>
+                        查看模型资产
+                      </button>
+                    ) : null}
+                  </div>
 
-            {renderWorkspaceSurface()}
+                  <article className="workspace__pagebar-note">
+                    <span>{workspaceMeta.groupLabel || "工作区"}</span>
+                    <strong>{workspaceMeta.focusTitle || workspaceMeta.label}</strong>
+                    <p>{workspaceMeta.focusSummary || workspaceMeta.summary}</p>
+                  </article>
+                </div>
+              </section>
+
+              <section className="workspace__facts" aria-label="工作区摘要">
+                <div className="workspace__fact">
+                  <span>当前模块</span>
+                  <strong>{workspaceMeta.label}</strong>
+                </div>
+                <div className="workspace__fact">
+                  <span>当前角色</span>
+                  <strong>{sessionSummary}</strong>
+                </div>
+                <div className="workspace__fact">
+                  <span>在线模型</span>
+                  <strong>{health.state === "online" ? (health.data?.current_model || "--") : "--"}</strong>
+                </div>
+                <div className="workspace__fact">
+                  <span>接口入口</span>
+                  <strong>{getApiBaseLabel()}</strong>
+                </div>
+              </section>
+
+              {renderWorkspaceSurface()}
+            </main>
           </section>
-        </main>
+        </div>
       ) : renderGuestLanding()}
 
       <AuthDialog

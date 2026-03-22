@@ -20,9 +20,11 @@ export function WorkspaceNav({
             className={`workspace-nav__item${active ? " is-active" : ""}`}
             onClick={() => onChangeWorkspace(workspace.id)}
           >
-            <span className="workspace-nav__index">{workspace.step || String(index + 1).padStart(2, "0")}</span>
+            <span className="workspace-nav__glyph" aria-hidden="true">
+              {workspace.navGlyph || workspace.step || String(index + 1).padStart(2, "0")}
+            </span>
             <span className="workspace-nav__content">
-              {workspace.groupLabel ? <em>{workspace.groupLabel}</em> : null}
+              {layout !== "sidebar" && workspace.groupLabel ? <em>{workspace.groupLabel}</em> : null}
               <strong>{workspace.label}</strong>
               <small>{workspace.hint}</small>
             </span>
