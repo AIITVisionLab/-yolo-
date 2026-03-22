@@ -1,0 +1,24 @@
+services:
+  backend:
+    build:
+      context: ..
+      dockerfile: deploy/backend.Dockerfile
+    env_file:
+      - ./backend.env
+    ports:
+      - "7800:7800"
+    volumes:
+      - ../plantbackend/models:/app/plantbackend/models
+      - ../plantbackend/annotation_datasets:/app/plantbackend/annotation_datasets
+      - ../plantbackend/training_runs:/app/plantbackend/training_runs
+      - ../plantbackend/plant_auth.db:/app/plantbackend/plant_auth.db
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: deploy/frontend.Dockerfile
+    depends_on:
+      - backend
+    ports:
+      - "5500:80"
+
