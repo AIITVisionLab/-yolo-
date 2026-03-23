@@ -102,6 +102,7 @@ except ImportError:
         save_uploaded_file,
     )
     from ai_advice_service import AiAdviceService
+    
     from augmentation_manager import (
         clear_active_augmentation_override,
         ensure_augmentation_algorithms_dir,
@@ -595,37 +596,26 @@ def ensure_dataset_write_access(dataset_name: Optional[str], current_user: Dict[
 
 def list_accessible_model_names(current_user: Dict[str, object]) -> List[str]:
     sync_model_registry()
-    available_models = get_sorted_model_names(model_service.available_models())
+    available_models = get_release_visible_model_names(model_service.available_models())
     if user_is_admin(current_user):
         return available_models
     accessible_models = set(auth_store.list_accessible_model_names_for_user(int(current_user["id"])))
     return [model_name for model_name in available_models if model_name in accessible_models]
 
 
-def get_sorted_model_names(model_names: List[str]) -> List[str]:
+def get_release_visible_model_names(model_names: List[str]) -> List[str]:
     normalized_names = sorted({Path(model_name).name for model_name in model_names if model_name})
-    prioritized_names: List[str] = []
+    best_names: List[str] = []
     if "best.onnx" in normalized_names:
-        prioritized_names.append("best.onnx")
-    prioritized_names.extend([
+        best_names.append("best.onnx")
+    best_names.extend([
         model_name
         for model_name in normalized_names
         if model_name != "best.onnx" and re.fullmatch(r"best(?:\(\d+\))?\.onnx", model_name, flags=re.IGNORECASE)
     ])
-    remaining_names = [model_name for model_name in normalized_names if model_name not in prioritized_names]
-    return prioritized_names + remaining_names
-
-
-def get_release_visible_model_names(model_names: List[str]) -> List[str]:
-    sorted_names = get_sorted_model_names(model_names)
-    best_names = [
-        model_name
-        for model_name in sorted_names
-        if re.fullmatch(r"best(?:\(\d+\))?\.onnx", model_name, flags=re.IGNORECASE)
-    ]
     if best_names:
         return best_names[:2]
-    return sorted_names[:2]
+    return normalized_names[:2]
 
 
 def get_preferred_model_name_for_user(current_user: Dict[str, object], accessible_models: Optional[List[str]] = None) -> Optional[str]:
@@ -1505,7 +1495,7 @@ def build_admin_console_response(current_user: Dict[str, object], message: str =
     sync_model_registry()
     model_records_by_name = {item["model_name"]: item for item in auth_store.list_all_models()}
     dataset_records = auth_store.list_all_datasets()
-    available_models = get_sorted_model_names(model_service.available_models())
+    available_models = get_release_visible_model_names(model_service.available_models())
     current_model = model_service.current_model_name if model_service.current_model_name in available_models else (available_models[0] if available_models else None)
     return AdminConsoleResponse(
         success=True,
