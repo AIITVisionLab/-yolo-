@@ -30,11 +30,7 @@ plant/
 ### 后端
 
 ```bash
-cd plantbackend
-python3 -m venv .venv
-source .venv/bin/activate
-python3 -m pip install -r requirements.txt
-python3 -m uvicorn asgi:app --host 127.0.0.1 --port 7800
+python3 -m uvicorn plantbackend.asgi:app --host 127.0.0.1 --port 7800
 ```
 
 如果本机默认 Python 版本对 `torch/ultralytics` 不兼容，可以额外准备 `plantbackend/.venv-train` 作为训练专用环境。后端会自动优先使用这个解释器执行训练任务。
