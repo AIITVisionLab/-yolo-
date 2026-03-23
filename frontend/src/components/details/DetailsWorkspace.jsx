@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { FileField } from "@/components/shared/FileField";
-import { buildApiUrl, getApiBaseLabel } from "@/lib/api";
+import { buildApiUrl } from "@/lib/api";
 import { saveBlobAsFile } from "@/lib/download";
 import {
   deleteModelAsset,
@@ -12,12 +12,12 @@ import {
 
 function describeHealth(health) {
   if (health.state === "online") {
-    return "后端在线";
+    return "系统就绪";
   }
   if (health.state === "offline") {
-    return "后端不可用";
+    return "服务异常";
   }
-  return "正在检测";
+  return "正在连接";
 }
 
 function describeModel(health) {
@@ -33,6 +33,7 @@ function describeOwner(item) {
 
 export function DetailsWorkspace({ token, isAuthenticated, user, health }) {
   const isAdmin = user?.role === "admin";
+  const [detailsView, setDetailsView] = useState("models");
   const [modelsState, setModelsState] = useState({
     loading: false,
     items: [],
@@ -92,50 +93,29 @@ export function DetailsWorkspace({ token, isAuthenticated, user, health }) {
     };
   }, [isAuthenticated, token]);
 
-  const quickFacts = useMemo(() => {
-    if (isAdmin) {
-      return [
-        {
-          label: "服务状态",
-          value: describeHealth(health),
-          note: health.message || "后端健康检查",
-        },
-        {
-          label: "当前在线模型",
-          value: describeModel(health),
-          note: "识别页会直接调用当前激活模型",
-        },
-        {
-          label: "接口基址",
-          value: getApiBaseLabel(),
-          note: "部署时默认走同源代理",
-        },
-        {
-          label: "当前会话",
-          value: isAuthenticated ? "管理员" : "未登录",
-          note: isAuthenticated ? (user?.display_name || user?.username || "已登录") : "登录后可维护平台资源",
-        },
-      ];
-    }
-
-    return [
+  const detailViews = useMemo(() => {
+    const items = [
       {
-        label: "可访问模型",
-        value: String(modelsState.items.length),
-        note: "包含公开模型和你上传的个人模型",
+        id: "models",
+        label: "模型列表",
+        summary: modelsState.currentModel || `${modelsState.items.length} 个可访问模型`,
       },
       {
-        label: "当前会话",
-        value: isAuthenticated ? "普通用户" : "未登录",
-        note: isAuthenticated ? (user?.display_name || user?.username || "已登录") : "登录后可上传个人模型",
-      },
-      {
-        label: "当前使用模型",
-        value: modelsState.currentModel || describeModel(health),
-        note: "识别页会优先调用当前可访问模型",
+        id: "upload",
+        label: "上传模型",
+        summary: isAdmin ? "上线或替换可用模型" : "上传个人模型",
       },
     ];
-  }, [health, isAdmin, isAuthenticated, modelsState.currentModel, modelsState.items.length, user]);
+    if (isAdmin) {
+      items.push({
+        id: "deploy",
+        label: "部署入口",
+        summary: "接口文档与联调入口",
+      });
+    }
+    return items;
+  }, [isAdmin, modelsState.currentModel, modelsState.items.length]);
+  const activeDetailsView = detailsView === "deploy" && !isAdmin ? "models" : detailsView;
 
   async function reloadModels(message = "") {
     if (!token) {
@@ -189,50 +169,29 @@ export function DetailsWorkspace({ token, isAuthenticated, user, health }) {
       <div className="native-workspace__panel native-workspace__panel--controls">
         <div className="native-workspace__section-head">
           <p className="workspace__section-label">Assets</p>
-          <h3>{isAdmin ? "资产与部署" : "模型资产"}</h3>
-          <p>
-            {isAdmin
-              ? "把运行状态、模型资产和部署入口放进一个网页模块里，不再堆大量说明文字。"
-              : "普通用户侧只保留模型上传、下载和切换相关能力。"}
-          </p>
+          <h3>{isAdmin ? "模型资产与部署" : "模型资产"}</h3>
         </div>
 
-        <div className="ops-metric-grid ops-metric-grid--stacked">
-          {(isAdmin ? quickFacts.slice(0, 2) : quickFacts.slice(0, 1)).map((item) => (
-            <article key={item.label} className="ops-card">
+        <div className="workspace-mode-switch" role="tablist" aria-label="资产工作区视图">
+          {detailViews.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              role="tab"
+              aria-selected={activeDetailsView === item.id}
+              className={`workspace-mode-switch__item${activeDetailsView === item.id ? " is-active" : ""}`}
+              onClick={() => setDetailsView(item.id)}
+            >
               <span>{item.label}</span>
-              <strong>{item.value}</strong>
-              <p>{item.note}</p>
-            </article>
+              <strong>{item.summary}</strong>
+            </button>
           ))}
         </div>
 
-        {isAdmin ? (
-          <div className="native-workspace__group">
-            <div className="native-workspace__section-head native-workspace__section-head--tight">
-              <h3>部署入口</h3>
-              <p>同一个站点下即可定位 API、文档和当前服务状态。</p>
-            </div>
-            <div className="guide-grid guide-grid--stacked">
-              <article className="guide-card">
-                <span>接口文档</span>
-                <strong>FastAPI Docs</strong>
-                <p>部署后可直接用它验证接口是否在线。</p>
-                <a className="native-link" href={buildApiUrl("/docs")} target="_blank" rel="noreferrer">
-                  打开接口文档
-                </a>
-              </article>
-              <article className="guide-card">
-                <span>OpenAPI</span>
-                <strong>Schema JSON</strong>
-                <p>前后端联调时可直接下载最新 schema。</p>
-                <a className="native-link" href={buildApiUrl("/openapi.json")} target="_blank" rel="noreferrer">
-                  打开 Schema
-                </a>
-              </article>
-            </div>
-          </div>
-        ) : null}
+        <div className="native-inline-actions native-inline-actions--triple">
+          <span className="native-pill native-pill--accent">{modelsState.currentModel || describeModel(health)}</span>
+          <span className="native-pill native-pill--neutral">{describeHealth(health)}</span>
+        </div>
 
         <div className="native-feedback">
           <p>{status}</p>
@@ -243,23 +202,16 @@ export function DetailsWorkspace({ token, isAuthenticated, user, health }) {
 
       <div className="native-workspace__panel native-workspace__panel--canvas">
         <div className="native-workspace__section-head">
-          <p className="workspace__section-label">Model Assets</p>
-          <h3>{isAdmin ? "模型资产中心" : "个人模型中心"}</h3>
-          <p>
-            {isAdmin
-              ? "登录后即可上传、下载和维护自己的模型。管理员还能在这里直接切换当前在线模型。"
-              : "登录后即可上传、下载和维护自己的模型。"}
+          <p className="workspace__section-label">
+            {activeDetailsView === "models" ? "Model Assets" : activeDetailsView === "upload" ? "Upload" : "Deploy"}
           </p>
-        </div>
-
-        <div className="ops-metric-grid">
-          {quickFacts.map((item) => (
-            <article key={item.label} className="ops-card">
-              <span>{item.label}</span>
-              <strong>{item.value}</strong>
-              <p>{item.note}</p>
-            </article>
-          ))}
+          <h3>
+            {activeDetailsView === "models"
+              ? (isAdmin ? "模型资产中心" : "个人模型中心")
+              : activeDetailsView === "upload"
+                ? (isAdmin ? "上传与替换模型" : "上传个人模型")
+                : "部署入口"}
+          </h3>
         </div>
 
         {!isAuthenticated ? (
@@ -268,164 +220,177 @@ export function DetailsWorkspace({ token, isAuthenticated, user, health }) {
             <p>登录后会解锁模型上传、下载、删除和切换能力。</p>
           </div>
         ) : (
-          <div className="details-board">
-            <section className="asset-collection">
-              <div className="asset-collection__head">
-                <div>
-                  <p className="workspace__section-label">Upload</p>
-                  <h3>上传个人模型</h3>
+          <>
+            {activeDetailsView === "upload" ? (
+              <section className="asset-collection">
+                <div className="asset-collection__head">
+                  <div>
+                    <p className="workspace__section-label">Upload</p>
+                    <h3>{isAdmin ? "上传平台模型" : "上传个人模型"}</h3>
+                  </div>
+                  <span className="native-pill native-pill--neutral">
+                    {uploadForm.activate ? "上传后启用" : "仅上传"}
+                  </span>
                 </div>
-              </div>
-              <form className="native-form" onSubmit={handleModelUpload}>
-                <FileField
-                  label="模型文件"
-                  accept=".onnx"
-                  file={uploadForm.modelFile}
-                  onChange={(file) => setUploadForm((current) => ({ ...current, modelFile: file }))}
-                  buttonLabel="选择 ONNX"
-                />
-                <FileField
-                  label="标签文件"
-                  accept=".json"
-                  file={uploadForm.labelsFile}
-                  onChange={(file) => setUploadForm((current) => ({ ...current, labelsFile: file }))}
-                  buttonLabel="选择标签"
-                />
-                <FileField
-                  label="说明文件"
-                  accept=".json"
-                  file={uploadForm.metadataFile}
-                  onChange={(file) => setUploadForm((current) => ({ ...current, metadataFile: file }))}
-                  buttonLabel="选择说明"
-                />
-                <label className="native-checkbox">
-                  <input
-                    type="checkbox"
-                    checked={uploadForm.isPublic}
-                    onChange={(event) => setUploadForm((current) => ({ ...current, isPublic: event.target.checked }))}
+                <form className="native-form" onSubmit={handleModelUpload}>
+                  <FileField
+                    label="模型文件"
+                    accept=".onnx"
+                    file={uploadForm.modelFile}
+                    onChange={(file) => setUploadForm((current) => ({ ...current, modelFile: file }))}
+                    buttonLabel="选择 ONNX"
                   />
-                  <span>上传为公开模型</span>
-                </label>
-                <label className="native-checkbox">
-                  <input
-                    type="checkbox"
-                    checked={uploadForm.activate}
-                    onChange={(event) => setUploadForm((current) => ({ ...current, activate: event.target.checked }))}
+                  <FileField
+                    label="标签文件"
+                    accept=".json"
+                    file={uploadForm.labelsFile}
+                    onChange={(file) => setUploadForm((current) => ({ ...current, labelsFile: file }))}
+                    buttonLabel="选择标签"
                   />
-                  <span>上传后立即使用</span>
-                </label>
-                <button type="submit" className="primary" disabled={busyKey === "upload-user-model"}>
-                  {busyKey === "upload-user-model" ? "上传中..." : "上传模型"}
-                </button>
-              </form>
-            </section>
+                  <FileField
+                    label="说明文件"
+                    accept=".json"
+                    file={uploadForm.metadataFile}
+                    onChange={(file) => setUploadForm((current) => ({ ...current, metadataFile: file }))}
+                    buttonLabel="选择说明"
+                  />
+                  <label className="native-checkbox">
+                    <input
+                      type="checkbox"
+                      checked={uploadForm.isPublic}
+                      onChange={(event) => setUploadForm((current) => ({ ...current, isPublic: event.target.checked }))}
+                    />
+                    <span>上传为公开模型</span>
+                  </label>
+                  <label className="native-checkbox">
+                    <input
+                      type="checkbox"
+                      checked={uploadForm.activate}
+                      onChange={(event) => setUploadForm((current) => ({ ...current, activate: event.target.checked }))}
+                    />
+                    <span>上传后立即使用</span>
+                  </label>
+                  <button type="submit" className="primary" disabled={busyKey === "upload-user-model"}>
+                    {busyKey === "upload-user-model" ? "上传中..." : "上传模型"}
+                  </button>
+                </form>
+              </section>
+            ) : null}
 
-            <section className="asset-collection asset-collection--wide">
-              <div className="asset-collection__head">
-                <div>
-                  <p className="workspace__section-label">Models</p>
-                  <h3>可访问模型</h3>
+            {activeDetailsView === "models" ? (
+              <section className="asset-collection asset-collection--wide">
+                <div className="asset-collection__head">
+                  <div>
+                    <p className="workspace__section-label">Models</p>
+                    <h3>可访问模型</h3>
+                  </div>
+                  <span className="native-pill native-pill--accent">{modelsState.currentModel || "未启用"}</span>
                 </div>
-                <span className="native-pill native-pill--accent">{modelsState.currentModel || "未启用"}</span>
-              </div>
-              {!modelsState.items.length ? (
-                <div className="native-empty native-empty--compact">
-                  <p>当前账号还没有可访问模型。</p>
-                </div>
-              ) : (
-                <div className="asset-list">
-                  {modelsState.items.map((model) => (
-                    <article key={model.name} className={`asset-row${model.is_active ? " is-active" : ""}`}>
-                      <div className="asset-row__main">
-                        <div className="asset-row__title">
-                          <strong>{model.name}</strong>
-                          <div className="asset-row__badges">
-                            {model.is_active ? <span className="native-pill native-pill--accent">当前模型</span> : null}
-                            <span className="native-pill native-pill--neutral">{model.is_public ? "公开" : "私有"}</span>
-                            {model.is_official ? <span className="native-pill native-pill--warm">官方</span> : null}
+                {!modelsState.items.length ? (
+                  <div className="native-empty native-empty--compact">
+                    <p>当前账号还没有可访问模型。</p>
+                  </div>
+                ) : (
+                  <div className="asset-list">
+                    {modelsState.items.map((model) => (
+                      <article key={model.name} className={`asset-row${model.is_active ? " is-active" : ""}`}>
+                        <div className="asset-row__main">
+                          <div className="asset-row__title">
+                            <strong>{model.name}</strong>
+                            <div className="asset-row__badges">
+                              {model.is_active ? <span className="native-pill native-pill--accent">当前模型</span> : null}
+                              <span className="native-pill native-pill--neutral">{model.is_public ? "公开" : "私有"}</span>
+                              {model.is_official ? <span className="native-pill native-pill--warm">官方</span> : null}
+                            </div>
                           </div>
+                          <p>{describeOwner(model)}</p>
                         </div>
-                        <p>{describeOwner(model)}</p>
-                      </div>
-                      <div className="asset-row__actions">
-                        <button
-                          type="button"
-                          className="secondary native-utility-button"
-                          disabled={busyKey === `download-user-model-${model.name}`}
-                          onClick={() => runAssetAction(`download-user-model-${model.name}`, async () => {
-                            const blob = await downloadModelArchive(token, model.name);
-                            saveBlobAsFile(blob, `${model.name.replace(/\.onnx$/i, "")}_model.zip`);
-                            setStatus(`模型 ${model.name} 已开始下载。`);
-                          })}
-                        >
-                          下载
-                        </button>
-                        {user?.role === "admin" ? (
+                        <div className="asset-row__actions">
                           <button
                             type="button"
                             className="secondary native-utility-button"
-                            disabled={busyKey === `activate-user-model-${model.name}` || model.is_active}
-                            onClick={() => runAssetAction(`activate-user-model-${model.name}`, async () => {
-                              const payload = await selectActiveModel(token, model.name);
-                              await reloadModels(payload?.message || `已切换模型 ${model.name}。`);
+                            disabled={busyKey === `download-user-model-${model.name}`}
+                            onClick={() => runAssetAction(`download-user-model-${model.name}`, async () => {
+                              const blob = await downloadModelArchive(token, model.name);
+                              saveBlobAsFile(blob, `${model.name.replace(/\.onnx$/i, "")}_model.zip`);
+                              setStatus(`模型 ${model.name} 已开始下载。`);
                             })}
                           >
-                            {model.is_active ? "正在使用" : "设为当前"}
+                            下载
                           </button>
-                        ) : null}
-                        {model.can_manage ? (
-                          <button
-                            type="button"
-                            className="secondary native-utility-button"
-                            disabled={busyKey === `delete-user-model-${model.name}`}
-                            onClick={() => {
-                              if (!window.confirm(`确定删除模型 ${model.name} 吗？`)) {
-                                return;
-                              }
-                              runAssetAction(`delete-user-model-${model.name}`, async () => {
-                                const payload = await deleteModelAsset(token, model.name);
-                                await reloadModels(payload?.message || `模型 ${model.name} 已删除。`);
-                              });
-                            }}
-                          >
-                            删除
-                          </button>
-                        ) : null}
-                      </div>
-                    </article>
-                  ))}
-                </div>
-              )}
-            </section>
+                          {user?.role === "admin" ? (
+                            <button
+                              type="button"
+                              className="secondary native-utility-button"
+                              disabled={busyKey === `activate-user-model-${model.name}` || model.is_active}
+                              onClick={() => runAssetAction(`activate-user-model-${model.name}`, async () => {
+                                const payload = await selectActiveModel(token, model.name);
+                                await reloadModels(payload?.message || `已切换模型 ${model.name}。`);
+                              })}
+                            >
+                              {model.is_active ? "正在使用" : "设为当前"}
+                            </button>
+                          ) : null}
+                          {model.can_manage ? (
+                            <button
+                              type="button"
+                              className="secondary native-utility-button"
+                              disabled={busyKey === `delete-user-model-${model.name}`}
+                              onClick={() => {
+                                if (!window.confirm(`确定删除模型 ${model.name} 吗？`)) {
+                                  return;
+                                }
+                                runAssetAction(`delete-user-model-${model.name}`, async () => {
+                                  const payload = await deleteModelAsset(token, model.name);
+                                  await reloadModels(payload?.message || `模型 ${model.name} 已删除。`);
+                                });
+                              }}
+                            >
+                              删除
+                            </button>
+                          ) : null}
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </section>
+            ) : null}
 
-            <section className="asset-collection asset-collection--wide">
-              <div className="asset-collection__head">
-                <div>
-                  <p className="workspace__section-label">Operations</p>
-                  <h3>{isAdmin ? "站点使用路径" : "常用操作"}</h3>
+            {activeDetailsView === "deploy" && isAdmin ? (
+              <section className="asset-collection asset-collection--wide">
+                <div className="asset-collection__head">
+                  <div>
+                    <p className="workspace__section-label">Deploy</p>
+                    <h3>部署与联调入口</h3>
+                  </div>
                 </div>
-              </div>
-              <div className="guide-grid">
-                <article className="guide-card">
-                  <span>识别</span>
-                  <strong>上传或采集叶片图片</strong>
-                  <p>识别页会返回类别、置信度和检测框，并可继续送去标注。</p>
-                </article>
-                <article className="guide-card">
-                  <span>标注</span>
-                  <strong>导入识别框并修正</strong>
-                  <p>标注页会把图片和 YOLO 标签写入选中的数据集，并继续增强与训练。</p>
-                </article>
-                {isAdmin ? (
+                <div className="guide-grid">
                   <article className="guide-card">
-                    <span>部署</span>
-                    <strong>统一走同源 /api</strong>
-                    <p>构建后前端静态资源和 API 代理可以直接交给反向代理统一发布。</p>
+                    <span>接口文档</span>
+                    <strong>FastAPI Docs</strong>
+                    <p>部署后可直接用它验证接口是否在线。</p>
+                    <a className="native-link" href={buildApiUrl("/docs")} target="_blank" rel="noreferrer">
+                      打开接口文档
+                    </a>
                   </article>
-                ) : null}
-              </div>
-            </section>
-          </div>
+                  <article className="guide-card">
+                    <span>OpenAPI</span>
+                    <strong>Schema JSON</strong>
+                    <p>前后端联调时可直接下载最新 schema。</p>
+                    <a className="native-link" href={buildApiUrl("/openapi.json")} target="_blank" rel="noreferrer">
+                      打开 Schema
+                    </a>
+                  </article>
+                  <article className="guide-card">
+                    <span>当前发布</span>
+                    <strong>{modelsState.currentModel || describeModel(health)}</strong>
+                    <p>发布前确认当前在线模型名称和接口基址，避免切错版本。</p>
+                  </article>
+                </div>
+              </section>
+            ) : null}
+          </>
         )}
       </div>
     </section>

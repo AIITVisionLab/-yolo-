@@ -85,6 +85,8 @@ export function AdminWorkspace({ token, isAuthenticated, user }) {
   const [error, setError] = useState("");
   const [busyKey, setBusyKey] = useState("");
   const [selectedAugmentation, setSelectedAugmentation] = useState("");
+  const [adminActionView, setAdminActionView] = useState("model");
+  const [adminBoardView, setAdminBoardView] = useState("models");
   const [modelForm, setModelForm] = useState({
     modelFile: null,
     labelsFile: null,
@@ -151,33 +153,6 @@ export function AdminWorkspace({ token, isAuthenticated, user }) {
     };
   }, [isAdmin, isAuthenticated, token]);
 
-  const metrics = useMemo(() => {
-    const managedModels = consoleData?.managed_models || [];
-    const managedDatasets = consoleData?.managed_datasets || [];
-    const augmentations = consoleData?.managed_augmentation_scripts || [];
-    return [
-      {
-        label: "当前在线模型",
-        value: consoleData?.current_model || "--",
-        note: `${managedModels.length} 个可管理模型`,
-      },
-      {
-        label: "数据集资源",
-        value: String(managedDatasets.length),
-        note: "可直接下载或删除",
-      },
-      {
-        label: "增强脚本",
-        value: consoleData?.active_augmentation_script || consoleData?.builtin_augmentation_script || "--",
-        note: `${augmentations.length} 个外部脚本`,
-      },
-      {
-        label: "平台用户",
-        value: String(users.length),
-        note: `${users.filter((item) => item.is_flagged).length} 个重点关注`,
-      },
-    ];
-  }, [consoleData, users]);
   const augmentationCards = useMemo(() => {
     const cards = [];
     if (consoleData?.builtin_augmentation_item) {
@@ -193,6 +168,45 @@ export function AdminWorkspace({ token, isAuthenticated, user }) {
     const selected = augmentationCards.find((item) => (item.is_builtin ? "" : item.name) === selectedAugmentation);
     return selected || augmentationCards.find((item) => item.is_active) || augmentationCards[0];
   }, [augmentationCards, selectedAugmentation]);
+  const adminActionViews = useMemo(() => ([
+    {
+      id: "model",
+      label: "上传模型",
+      summary: consoleData?.current_model || "切换在线模型",
+    },
+    {
+      id: "dataset",
+      label: "导入数据集",
+      summary: `${consoleData?.managed_datasets?.length || 0} 个数据集`,
+    },
+    {
+      id: "augmentation",
+      label: "上线脚本",
+      summary: getAugmentationDisplayName(highlightedAugmentation),
+    },
+  ]), [consoleData, highlightedAugmentation]);
+  const adminBoardViews = useMemo(() => ([
+    {
+      id: "models",
+      label: "模型资源",
+      summary: consoleData?.current_model || `${consoleData?.managed_models?.length || 0} 个模型`,
+    },
+    {
+      id: "datasets",
+      label: "数据集",
+      summary: `${consoleData?.managed_datasets?.length || 0} 个可管理数据集`,
+    },
+    {
+      id: "users",
+      label: "平台用户",
+      summary: `${users.length} 个账号`,
+    },
+    {
+      id: "augmentations",
+      label: "增强脚本",
+      summary: getAugmentationDisplayName(highlightedAugmentation),
+    },
+  ]), [consoleData, highlightedAugmentation, users.length]);
 
   async function reloadAdminState(message = "") {
     if (!token) {
@@ -321,202 +335,201 @@ export function AdminWorkspace({ token, isAuthenticated, user }) {
         <div className="native-workspace__section-head">
           <p className="workspace__section-label">Admin</p>
           <h3>平台总控台</h3>
-          <p>把模型、数据集、增强算法和用户状态集中在一个农业 AI 运维界面里，管理员可以直接完成上线和切换。</p>
         </div>
 
-        <div className="admin-hero-card">
-          <div>
-            <span>当前生效增强</span>
-            <strong>{getAugmentationDisplayName(highlightedAugmentation)}</strong>
-          </div>
-          <div>
-            <span>当前在线模型</span>
-            <strong>{consoleData?.current_model || "未启用"}</strong>
-          </div>
-          <div>
-            <span>重点关注用户</span>
-            <strong>{users.filter((item) => item.is_flagged).length}</strong>
-          </div>
-        </div>
-
-        <div className="ops-metric-grid ops-metric-grid--stacked">
-          {metrics.slice(0, 3).map((item) => (
-            <article key={item.label} className="ops-card">
+        <div className="workspace-mode-switch" role="tablist" aria-label="平台操作入口">
+          {adminActionViews.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              role="tab"
+              aria-selected={adminActionView === item.id}
+              className={`workspace-mode-switch__item${adminActionView === item.id ? " is-active" : ""}`}
+              onClick={() => setAdminActionView(item.id)}
+            >
               <span>{item.label}</span>
-              <strong>{item.value}</strong>
-              <p>{item.note}</p>
-            </article>
+              <strong>{item.summary}</strong>
+            </button>
           ))}
         </div>
 
-        <div className="native-workspace__group">
-          <div className="native-workspace__section-head native-workspace__section-head--tight">
-            <h3>上传模型</h3>
-            <p>支持 `.onnx` 主文件，可选标签文件和说明文件，适合直接接入识别链路。</p>
-          </div>
-          <form className="native-form" onSubmit={handleAdminModelUpload}>
-            <FileField
-              label="模型文件"
-              accept=".onnx"
-              file={modelForm.modelFile}
-              onChange={(file) => setModelForm((current) => ({ ...current, modelFile: file }))}
-              buttonLabel="选择 ONNX"
-            />
-            <FileField
-              label="标签文件"
-              accept=".json"
-              file={modelForm.labelsFile}
-              onChange={(file) => setModelForm((current) => ({ ...current, labelsFile: file }))}
-              buttonLabel="选择标签"
-            />
-            <FileField
-              label="说明文件"
-              accept=".json"
-              file={modelForm.metadataFile}
-              onChange={(file) => setModelForm((current) => ({ ...current, metadataFile: file }))}
-              buttonLabel="选择说明"
-            />
-            <label className="native-checkbox">
-              <input
-                type="checkbox"
-                checked={modelForm.isPublic}
-                onChange={(event) => setModelForm((current) => ({ ...current, isPublic: event.target.checked }))}
-              />
-              <span>上传为公开模型</span>
-            </label>
-            <label className="native-checkbox">
-              <input
-                type="checkbox"
-                checked={modelForm.activate}
-                onChange={(event) => setModelForm((current) => ({ ...current, activate: event.target.checked }))}
-              />
-              <span>上传后立即启用</span>
-            </label>
-            <button type="submit" className="primary" disabled={busyKey === "upload-model"}>
-              {busyKey === "upload-model" ? "上传中..." : "上传模型"}
-            </button>
-          </form>
+        <div className="native-inline-actions native-inline-actions--triple">
+          <span className="native-pill native-pill--accent">{consoleData?.current_model || "未启用模型"}</span>
+          <span className="native-pill native-pill--warm">{getAugmentationDisplayName(highlightedAugmentation)}</span>
+          <span className="native-pill native-pill--neutral">{users.length} 个用户</span>
         </div>
 
-        <div className="native-workspace__group">
-          <div className="native-workspace__section-head native-workspace__section-head--tight">
-            <h3>导入数据集</h3>
-            <p>直接导入压缩包，导入后可在标注工位继续编辑、增强和训练。</p>
-          </div>
-          <form className="native-form" onSubmit={handleDatasetUpload}>
-            <FileField
-              label="数据集压缩包"
-              accept=".zip"
-              file={datasetForm.datasetFile}
-              onChange={(file) => setDatasetForm((current) => ({ ...current, datasetFile: file }))}
-              buttonLabel="选择 ZIP"
-            />
-            <label className="native-field">
-              <span>数据集名称</span>
-              <input
-                value={datasetForm.datasetName}
-                onChange={(event) => setDatasetForm((current) => ({ ...current, datasetName: event.target.value }))}
-                placeholder="留空则使用压缩包文件名"
+        {adminActionView === "model" ? (
+          <div className="native-workspace__group">
+            <div className="native-workspace__section-head native-workspace__section-head--tight">
+              <h3>上传模型</h3>
+            </div>
+            <form className="native-form" onSubmit={handleAdminModelUpload}>
+              <FileField
+                label="模型文件"
+                accept=".onnx"
+                file={modelForm.modelFile}
+                onChange={(file) => setModelForm((current) => ({ ...current, modelFile: file }))}
+                buttonLabel="选择 ONNX"
               />
-            </label>
-            <label className="native-checkbox">
-              <input
-                type="checkbox"
-                checked={datasetForm.isPublic}
-                onChange={(event) => setDatasetForm((current) => ({ ...current, isPublic: event.target.checked }))}
+              <FileField
+                label="标签文件"
+                accept=".json"
+                file={modelForm.labelsFile}
+                onChange={(file) => setModelForm((current) => ({ ...current, labelsFile: file }))}
+                buttonLabel="选择标签"
               />
-              <span>上传为公开数据集</span>
-            </label>
-            <button type="submit" className="secondary" disabled={busyKey === "upload-dataset"}>
-              {busyKey === "upload-dataset" ? "导入中..." : "导入数据集"}
-            </button>
-          </form>
-        </div>
-
-        <div className="native-workspace__group">
-          <div className="native-workspace__section-head native-workspace__section-head--tight">
-            <h3>上线增强算法</h3>
-            <p>上传 Python 脚本并补齐算法说明、版本和适用数据集类型，让算法切换不再只看文件名。</p>
-          </div>
-          <form className="native-form" onSubmit={handleAugmentationUpload}>
-            <FileField
-              label="增强脚本"
-              accept=".py"
-              file={augmentationForm.scriptFile}
-              onChange={(file) => setAugmentationForm((current) => ({ ...current, scriptFile: file }))}
-              buttonLabel="选择脚本"
+              <FileField
+                label="说明文件"
+                accept=".json"
+                file={modelForm.metadataFile}
+                onChange={(file) => setModelForm((current) => ({ ...current, metadataFile: file }))}
+                buttonLabel="选择说明"
               />
-            <label className="native-field">
-              <span>算法展示名</span>
-              <input
-                value={augmentationForm.displayName}
-                onChange={(event) => setAugmentationForm((current) => ({ ...current, displayName: event.target.value }))}
-                placeholder="例如 玉米叶片增强链路"
-              />
-            </label>
-            <div className="admin-two-column-grid">
-              <label className="native-field">
-                <span>版本号</span>
+              <label className="native-checkbox">
                 <input
-                  value={augmentationForm.version}
-                  onChange={(event) => setAugmentationForm((current) => ({ ...current, version: event.target.value }))}
-                  placeholder="例如 v1.2"
+                  type="checkbox"
+                  checked={modelForm.isPublic}
+                  onChange={(event) => setModelForm((current) => ({ ...current, isPublic: event.target.checked }))}
+                />
+                <span>上传为公开模型</span>
+              </label>
+              <label className="native-checkbox">
+                <input
+                  type="checkbox"
+                  checked={modelForm.activate}
+                  onChange={(event) => setModelForm((current) => ({ ...current, activate: event.target.checked }))}
+                />
+                <span>上传后立即启用</span>
+              </label>
+              <button type="submit" className="primary" disabled={busyKey === "upload-model"}>
+                {busyKey === "upload-model" ? "上传中..." : "上传模型"}
+              </button>
+            </form>
+          </div>
+        ) : null}
+
+        {adminActionView === "dataset" ? (
+          <div className="native-workspace__group">
+            <div className="native-workspace__section-head native-workspace__section-head--tight">
+              <h3>导入数据集</h3>
+            </div>
+            <form className="native-form" onSubmit={handleDatasetUpload}>
+              <FileField
+                label="数据集压缩包"
+                accept=".zip"
+                file={datasetForm.datasetFile}
+                onChange={(file) => setDatasetForm((current) => ({ ...current, datasetFile: file }))}
+                buttonLabel="选择 ZIP"
+              />
+              <label className="native-field">
+                <span>数据集名称</span>
+                <input
+                  value={datasetForm.datasetName}
+                  onChange={(event) => setDatasetForm((current) => ({ ...current, datasetName: event.target.value }))}
+                  placeholder="留空则使用压缩包文件名"
+                />
+              </label>
+              <label className="native-checkbox">
+                <input
+                  type="checkbox"
+                  checked={datasetForm.isPublic}
+                  onChange={(event) => setDatasetForm((current) => ({ ...current, isPublic: event.target.checked }))}
+                />
+                <span>上传为公开数据集</span>
+              </label>
+              <button type="submit" className="secondary" disabled={busyKey === "upload-dataset"}>
+                {busyKey === "upload-dataset" ? "导入中..." : "导入数据集"}
+              </button>
+            </form>
+          </div>
+        ) : null}
+
+        {adminActionView === "augmentation" ? (
+          <div className="native-workspace__group">
+            <div className="native-workspace__section-head native-workspace__section-head--tight">
+              <h3>上线增强算法</h3>
+            </div>
+            <form className="native-form" onSubmit={handleAugmentationUpload}>
+              <FileField
+                label="增强脚本"
+                accept=".py"
+                file={augmentationForm.scriptFile}
+                onChange={(file) => setAugmentationForm((current) => ({ ...current, scriptFile: file }))}
+                buttonLabel="选择脚本"
+              />
+              <label className="native-field">
+                <span>算法展示名</span>
+                <input
+                  value={augmentationForm.displayName}
+                  onChange={(event) => setAugmentationForm((current) => ({ ...current, displayName: event.target.value }))}
+                  placeholder="例如 玉米叶片增强链路"
+                />
+              </label>
+              <div className="admin-two-column-grid">
+                <label className="native-field">
+                  <span>版本号</span>
+                  <input
+                    value={augmentationForm.version}
+                    onChange={(event) => setAugmentationForm((current) => ({ ...current, version: event.target.value }))}
+                    placeholder="例如 v1.2"
+                  />
+                </label>
+                <label className="native-field">
+                  <span>作者</span>
+                  <input
+                    value={augmentationForm.author}
+                    onChange={(event) => setAugmentationForm((current) => ({ ...current, author: event.target.value }))}
+                    placeholder="留空则使用当前管理员"
+                  />
+                </label>
+              </div>
+              <label className="native-field">
+                <span>适用数据集类型</span>
+                <input
+                  value={augmentationForm.datasetTypes}
+                  onChange={(event) => setAugmentationForm((current) => ({ ...current, datasetTypes: event.target.value }))}
+                  placeholder="例如 玉米, 番茄, 目标检测"
                 />
               </label>
               <label className="native-field">
-                <span>作者</span>
-                <input
-                  value={augmentationForm.author}
-                  onChange={(event) => setAugmentationForm((current) => ({ ...current, author: event.target.value }))}
-                  placeholder="留空则使用当前管理员"
+                <span>算法说明</span>
+                <textarea
+                  className="native-textarea"
+                  value={augmentationForm.description}
+                  onChange={(event) => setAugmentationForm((current) => ({ ...current, description: event.target.value }))}
+                  placeholder="说明算法适用作物、增强策略和上线目的"
                 />
               </label>
-            </div>
-            <label className="native-field">
-              <span>适用数据集类型</span>
-              <input
-                value={augmentationForm.datasetTypes}
-                onChange={(event) => setAugmentationForm((current) => ({ ...current, datasetTypes: event.target.value }))}
-                placeholder="例如 玉米, 番茄, 目标检测"
-              />
-            </label>
-            <label className="native-field">
-              <span>算法说明</span>
-              <textarea
-                className="native-textarea"
-                value={augmentationForm.description}
-                onChange={(event) => setAugmentationForm((current) => ({ ...current, description: event.target.value }))}
-                placeholder="说明算法适用作物、增强策略和上线目的"
-              />
-            </label>
-            <label className="native-checkbox">
-              <input
-                type="checkbox"
-                checked={augmentationForm.activate}
-                onChange={(event) => setAugmentationForm((current) => ({ ...current, activate: event.target.checked }))}
-              />
-              <span>上传后立即启用</span>
-            </label>
-            <div className="native-inline-actions">
-              <button type="submit" className="secondary" disabled={busyKey === "upload-augmentation"}>
-                {busyKey === "upload-augmentation" ? "上传中..." : "上传脚本"}
-              </button>
-              <button
-                type="button"
-                className="secondary"
-                disabled={busyKey === "select-builtin"}
-                onClick={() => runAdminAction("select-builtin", async () => {
-                  const payload = await selectAdminAugmentation(token);
-                  setConsoleData(payload?.data || null);
-                  setSelectedAugmentation("");
-                  setStatus(payload?.message || "已切回内置增强算法。");
-                })}
-              >
-                切回内置增强
-              </button>
-            </div>
-          </form>
-        </div>
+              <label className="native-checkbox">
+                <input
+                  type="checkbox"
+                  checked={augmentationForm.activate}
+                  onChange={(event) => setAugmentationForm((current) => ({ ...current, activate: event.target.checked }))}
+                />
+                <span>上传后立即启用</span>
+              </label>
+              <div className="native-inline-actions">
+                <button type="submit" className="secondary" disabled={busyKey === "upload-augmentation"}>
+                  {busyKey === "upload-augmentation" ? "上传中..." : "上传脚本"}
+                </button>
+                <button
+                  type="button"
+                  className="secondary"
+                  disabled={busyKey === "select-builtin"}
+                  onClick={() => runAdminAction("select-builtin", async () => {
+                    const payload = await selectAdminAugmentation(token);
+                    setConsoleData(payload?.data || null);
+                    setSelectedAugmentation("");
+                    setStatus(payload?.message || "已切回内置增强算法。");
+                  })}
+                >
+                  切回内置增强
+                </button>
+              </div>
+            </form>
+          </div>
+        ) : null}
 
         <div className="native-feedback">
           <p>{status}</p>
@@ -527,23 +540,45 @@ export function AdminWorkspace({ token, isAuthenticated, user }) {
 
       <div className="native-workspace__panel native-workspace__panel--canvas">
         <div className="native-workspace__section-head">
-          <p className="workspace__section-label">Control Board</p>
-          <h3>资源与算法总控</h3>
-          <p>全部资源都在同一页集中展示，尤其把增强算法做成有说明、有适用范围的上架卡片。</p>
+          <p className="workspace__section-label">
+            {adminBoardView === "models"
+              ? "Models"
+              : adminBoardView === "datasets"
+                ? "Datasets"
+                : adminBoardView === "users"
+                  ? "Users"
+                  : "Augmentation"}
+          </p>
+          <h3>
+            {adminBoardView === "models"
+              ? "模型资源"
+              : adminBoardView === "datasets"
+                ? "数据集资源"
+                : adminBoardView === "users"
+                  ? "平台用户"
+                  : "增强算法上架台"}
+          </h3>
         </div>
 
-        <div className="ops-metric-grid">
-          {metrics.map((item) => (
-            <article key={item.label} className="ops-card">
+        <div className="workspace-mode-switch" role="tablist" aria-label="平台资源视图">
+          {adminBoardViews.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              role="tab"
+              aria-selected={adminBoardView === item.id}
+              className={`workspace-mode-switch__item${adminBoardView === item.id ? " is-active" : ""}`}
+              onClick={() => setAdminBoardView(item.id)}
+            >
               <span>{item.label}</span>
-              <strong>{item.value}</strong>
-              <p>{item.note}</p>
-            </article>
+              <strong>{item.summary}</strong>
+            </button>
           ))}
         </div>
 
         <div className="admin-board">
-          <section className="asset-collection asset-collection--wide">
+          {adminBoardView === "augmentations" ? (
+            <section className="asset-collection asset-collection--wide">
             <div className="asset-collection__head">
               <div>
                 <p className="workspace__section-label">Augmentation</p>
@@ -645,9 +680,11 @@ export function AdminWorkspace({ token, isAuthenticated, user }) {
                 </button>
               ))}
             </div>
-          </section>
+            </section>
+          ) : null}
 
-          <section className="asset-collection asset-collection--wide">
+          {adminBoardView === "users" ? (
+            <section className="asset-collection asset-collection--wide">
             <div className="asset-collection__head">
               <div>
                 <p className="workspace__section-label">Users</p>
@@ -725,9 +762,11 @@ export function AdminWorkspace({ token, isAuthenticated, user }) {
                 ))}
               </div>
             )}
-          </section>
+            </section>
+          ) : null}
 
-          <section className="asset-collection asset-collection--wide">
+          {adminBoardView === "models" ? (
+            <section className="asset-collection asset-collection--wide">
             <div className="asset-collection__head">
               <div>
                 <p className="workspace__section-label">Models</p>
@@ -801,9 +840,11 @@ export function AdminWorkspace({ token, isAuthenticated, user }) {
                 ))}
               </div>
             )}
-          </section>
+            </section>
+          ) : null}
 
-          <section className="asset-collection">
+          {adminBoardView === "datasets" ? (
+            <section className="asset-collection">
             <div className="asset-collection__head">
               <div>
                 <p className="workspace__section-label">Datasets</p>
@@ -864,7 +905,8 @@ export function AdminWorkspace({ token, isAuthenticated, user }) {
                 ))}
               </div>
             )}
-          </section>
+            </section>
+          ) : null}
         </div>
       </div>
     </section>

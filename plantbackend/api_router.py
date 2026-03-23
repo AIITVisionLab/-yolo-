@@ -595,11 +595,37 @@ def ensure_dataset_write_access(dataset_name: Optional[str], current_user: Dict[
 
 def list_accessible_model_names(current_user: Dict[str, object]) -> List[str]:
     sync_model_registry()
-    available_models = model_service.available_models()
+    available_models = get_sorted_model_names(model_service.available_models())
     if user_is_admin(current_user):
         return available_models
     accessible_models = set(auth_store.list_accessible_model_names_for_user(int(current_user["id"])))
     return [model_name for model_name in available_models if model_name in accessible_models]
+
+
+def get_sorted_model_names(model_names: List[str]) -> List[str]:
+    normalized_names = sorted({Path(model_name).name for model_name in model_names if model_name})
+    prioritized_names: List[str] = []
+    if "best.onnx" in normalized_names:
+        prioritized_names.append("best.onnx")
+    prioritized_names.extend([
+        model_name
+        for model_name in normalized_names
+        if model_name != "best.onnx" and re.fullmatch(r"best(?:\(\d+\))?\.onnx", model_name, flags=re.IGNORECASE)
+    ])
+    remaining_names = [model_name for model_name in normalized_names if model_name not in prioritized_names]
+    return prioritized_names + remaining_names
+
+
+def get_release_visible_model_names(model_names: List[str]) -> List[str]:
+    sorted_names = get_sorted_model_names(model_names)
+    best_names = [
+        model_name
+        for model_name in sorted_names
+        if re.fullmatch(r"best(?:\(\d+\))?\.onnx", model_name, flags=re.IGNORECASE)
+    ]
+    if best_names:
+        return best_names[:2]
+    return sorted_names[:2]
 
 
 def get_preferred_model_name_for_user(current_user: Dict[str, object], accessible_models: Optional[List[str]] = None) -> Optional[str]:
@@ -1479,15 +1505,16 @@ def build_admin_console_response(current_user: Dict[str, object], message: str =
     sync_model_registry()
     model_records_by_name = {item["model_name"]: item for item in auth_store.list_all_models()}
     dataset_records = auth_store.list_all_datasets()
-    available_models = model_service.available_models()
+    available_models = get_sorted_model_names(model_service.available_models())
+    current_model = model_service.current_model_name if model_service.current_model_name in available_models else (available_models[0] if available_models else None)
     return AdminConsoleResponse(
         success=True,
         message=message,
         data=AdminConsoleData(
             current_user=build_user_profile(current_user),
-            current_model=model_service.current_model_name,
+            current_model=current_model,
             available_models=available_models,
-            managed_models=list_managed_models(available_models, model_service.current_model_name, model_records_by_name),
+            managed_models=list_managed_models(available_models, current_model, model_records_by_name),
             managed_datasets=[build_managed_dataset_item(item, current_user) for item in dataset_records],
             builtin_augmentation_script=builtin_augment_path.name if builtin_augment_path.exists() else builtin_augment_path.name,
             active_augmentation_script=active_augment_path.name if active_augment_path else None,
@@ -2129,8 +2156,8 @@ def train_model_and_export(
 
 def build_health_response(current_user: Optional[Dict[str, object]] = None) -> HealthResponse:
     sync_model_registry()
-    service_available_models = model_service.available_models()
-    service_current_model = model_service.current_model_name if model_service.current_model_name in service_available_models else None
+    service_available_models = get_release_visible_model_names(model_service.available_models())
+    service_current_model = model_service.current_model_name if model_service.current_model_name in service_available_models else (service_available_models[0] if service_available_models else None)
 
     if current_user:
         available_models = list_accessible_model_names(current_user)

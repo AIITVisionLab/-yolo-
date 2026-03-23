@@ -153,6 +153,7 @@ export function AnnotationWorkspace({
   const [customClass, setCustomClass] = useState("");
   const [augmentCopies, setAugmentCopies] = useState(2);
   const [focusMode, setFocusMode] = useState(false);
+  const [annotationView, setAnnotationView] = useState(() => (recognitionPayload?.file ? "annotate" : "dataset"));
   const [trainForm, setTrainForm] = useState({
     baseModel: "yolov8n.pt",
     modelName: "",
@@ -411,6 +412,7 @@ export function AnnotationWorkspace({
     setBoxes([]);
     setDraftBox(null);
     setSelectedIndex(-1);
+    setAnnotationView("annotate");
     setFocusMode(true);
     setStatus(nextStatus);
     setError("");
@@ -714,6 +716,814 @@ export function AnnotationWorkspace({
     );
   }
 
+  const annotationViewTabs = [
+    {
+      id: "dataset",
+      label: "数据集准备",
+      summary: datasetState.selectedDataset || "先选数据集",
+    },
+    {
+      id: "annotate",
+      label: "标注",
+      summary: imageFile?.name || (boxes.length ? `${boxes.length} 个框` : "导入图片开始框选"),
+    },
+    {
+      id: "train",
+      label: "训练",
+      summary: trainTask?.status || (training ? "训练中" : "增强并启动训练"),
+    },
+  ];
+  const currentAnnotationTab = annotationViewTabs.find((item) => item.id === annotationView) || annotationViewTabs[0];
+
+  function renderStatusFeedback() {
+    return (
+      <div className="native-feedback">
+        <p>{status}</p>
+        {error ? <strong>{error}</strong> : null}
+      </div>
+    );
+  }
+
+  function renderDatasetControls() {
+    return (
+      <>
+        <div className="annotation-intro-card">
+          <div>
+            <span>当前数据集</span>
+            <strong>{datasetState.selectedDataset || "尚未选择"}</strong>
+          </div>
+          <div>
+            <span>类别模板</span>
+            <strong>{selectedDatasetTemplateLabel}</strong>
+          </div>
+          <div>
+            <span>写入权限</span>
+            <strong>{canWrite ? "可写入" : "只读"}</strong>
+          </div>
+        </div>
+
+        <div className="native-workspace__group annotation-sidebar__section annotation-sidebar__section--dataset">
+          <div className="annotation-sidebar__section-head">
+            <div>
+              <p className="workspace__section-label">01 Dataset</p>
+              <h4>当前数据集概况</h4>
+            </div>
+            <span className={`native-pill ${canWrite ? "native-pill--accent" : "native-pill--neutral"}`}>
+              {canWrite ? "可写入" : "只读"}
+            </span>
+          </div>
+
+          <label className="native-field">
+            <span>切换数据集</span>
+            <select
+              value={datasetState.selectedDataset}
+              onChange={(event) => reloadAnnotationData(event.target.value)}
+              disabled={!canOperate || datasetState.loading}
+            >
+              {!datasetState.datasetItems.length ? <option value="">{datasetState.loading ? "正在加载..." : "暂无数据集"}</option> : null}
+              {datasetState.datasetItems.map((item) => (
+                <option key={item.name} value={item.name}>
+                  {item.name}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <div className="annotation-dataset-overview">
+            <article className="annotation-dataset-overview__card">
+              <span>所属</span>
+              <strong>{getDatasetOwnerLabel(datasetState.datasetMeta)}</strong>
+            </article>
+            <article className="annotation-dataset-overview__card">
+              <span>开放性</span>
+              <strong>{datasetState.datasetMeta?.is_public ? "公开数据集" : "私有数据集"}</strong>
+            </article>
+            <article className="annotation-dataset-overview__card">
+              <span>类别范围</span>
+              <strong>{selectedDatasetTemplateLabel}</strong>
+            </article>
+          </div>
+
+          <p className="native-hint">{datasetState.hint || "创建数据集后即可开始保存标注。"}</p>
+
+          <div className="annotation-sidebar__stats">
+            <article className="annotation-sidebar__stat">
+              <span>原始样本</span>
+              <strong>{datasetState.counts.source}</strong>
+            </article>
+            <article className="annotation-sidebar__stat">
+              <span>Train</span>
+              <strong>{datasetState.counts.train}</strong>
+            </article>
+            <article className="annotation-sidebar__stat">
+              <span>Val</span>
+              <strong>{datasetState.counts.val}</strong>
+            </article>
+          </div>
+
+          <div className="native-inline-actions">
+            <button type="button" className="secondary" onClick={handleDatasetDownload} disabled={!canOperate || !datasetState.selectedDataset}>
+              下载数据集
+            </button>
+            <button type="button" className="secondary" onClick={handleDatasetDelete} disabled={!canOperate || !datasetState.selectedDataset || !canWrite}>
+              删除数据集
+            </button>
+          </div>
+        </div>
+
+        <div className="native-workspace__group annotation-sidebar__section annotation-sidebar__section--classes">
+          <div className="annotation-sidebar__section-head">
+            <div>
+              <p className="workspace__section-label">02 Classes</p>
+              <h4>类别库与建议</h4>
+            </div>
+            <span className="native-pill native-pill--neutral">{datasetState.classes.length} 类</span>
+          </div>
+
+          <label className="native-field">
+            <span>当前类别</span>
+            <select value={selectedClass} onChange={(event) => handleSelectedClassChange(event.target.value)} disabled={!canOperate || !datasetState.classes.length}>
+              {!datasetState.classes.length ? <option value="">暂无类别</option> : null}
+              {datasetState.classes.map((item) => (
+                <option key={item} value={item}>
+                  {item}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <div className="native-inline-actions">
+            <input value={customClass} onChange={(event) => setCustomClass(event.target.value)} placeholder="新增类别，例如 Corn leaf curl" disabled={!canOperate || !canWrite} />
+            <button type="button" className="secondary" onClick={handleAddClass} disabled={!canOperate || !canWrite}>
+              添加
+            </button>
+            <button type="button" className="secondary" onClick={handleDeleteClass} disabled={!canOperate || !canWrite || !selectedClass || datasetState.classes.length <= 1}>
+              删除
+            </button>
+          </div>
+
+          <div className="annotation-class-cloud">
+            {datasetState.classes.length ? (
+              datasetState.classes.map((item) => (
+                <button
+                  key={item}
+                  type="button"
+                  className={`annotation-class-cloud__item${selectedClass === item ? " is-active" : ""}`}
+                  onClick={() => handleSelectedClassChange(item)}
+                >
+                  {item}
+                </button>
+              ))
+            ) : (
+              <span className="annotation-class-cloud__empty">当前数据集还没有类别，先选模板或手动新增类别。</span>
+            )}
+          </div>
+
+          {selectedClassAdvice ? (
+            <div className="annotation-advice-card">
+              <div className="annotation-advice-card__head">
+                <strong>{selectedClassAdvice.class_name}</strong>
+                <span>知识库建议</span>
+              </div>
+              <p>{selectedClassAdvice.summary}</p>
+              {selectedClassAdvice.detail ? <p className="annotation-advice-card__meta">{selectedClassAdvice.detail}</p> : null}
+              <ul className="native-list native-list--stacked">
+                {selectedClassAdvice.advice.map((item) => (
+                  <li key={item} className="native-list__item native-list__item--stacked">
+                    <span>{item}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : (
+            <div className="annotation-advice-card annotation-advice-card--placeholder">
+              <div className="annotation-advice-card__head">
+                <strong>{selectedClass || "尚未选择类别"}</strong>
+                <span>建议区</span>
+              </div>
+              <p>新增类别后会自动调用实验室大模型生成建议并写入知识库缓存，后续识别和推荐会直接复用。</p>
+            </div>
+          )}
+        </div>
+
+        <div className="native-workspace__group annotation-sidebar__section annotation-sidebar__section--create">
+          <div className="annotation-sidebar__section-head">
+            <div>
+              <p className="workspace__section-label">03 Create</p>
+              <h4>新建数据集</h4>
+            </div>
+            <span className="native-pill native-pill--neutral">
+              {datasetCreateMode === "template" ? "模板建库" : "复制类别"}
+            </span>
+          </div>
+
+          <div className="annotation-mode-switch">
+            <button
+              type="button"
+              className={`annotation-mode-switch__item${datasetCreateMode === "template" ? " is-active" : ""}`}
+              onClick={() => setDatasetCreateMode("template")}
+            >
+              按作物模板创建
+            </button>
+            <button
+              type="button"
+              className={`annotation-mode-switch__item${datasetCreateMode === "clone" ? " is-active" : ""}`}
+              onClick={() => setDatasetCreateMode("clone")}
+            >
+              复制当前类别库
+            </button>
+          </div>
+
+          <label className="native-field">
+            <span>数据集名称</span>
+            <input
+              value={datasetCreateName}
+              onChange={(event) => setDatasetCreateName(event.target.value)}
+              placeholder="例如 corn_leaf_stage2"
+              disabled={!canOperate}
+            />
+          </label>
+
+          {datasetCreateMode === "template" ? (
+            <div className="annotation-template-grid">
+              {visibleTemplateCards.map((template) => (
+                <button
+                  key={template.key}
+                  type="button"
+                  className={`annotation-template-card${datasetTemplateKey === template.key ? " is-active" : ""}`}
+                  onClick={() => setDatasetTemplateKey(template.key)}
+                  disabled={!canOperate}
+                >
+                  <div className="annotation-template-card__head">
+                    <strong>{template.label}</strong>
+                    <span>{template.class_count} 类</span>
+                  </div>
+                  <p>{template.description}</p>
+                  <div className="annotation-template-card__preview">
+                    {template.classes.slice(0, 3).map((item) => (
+                      <span key={item}>{item}</span>
+                    ))}
+                    {!template.classes.length ? <span>空白起步</span> : null}
+                  </div>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="annotation-clone-card">
+              <strong>{datasetState.selectedDataset || "暂无可复制数据集"}</strong>
+              <p>复制模式会沿用当前数据集的类别集合，适合做版本迭代或精修集。</p>
+            </div>
+          )}
+
+          {datasetCreateMode === "template" && createTemplate ? (
+            <div className="annotation-template-summary">
+              <strong>{createTemplate.label}</strong>
+              <p>{createTemplate.description}</p>
+            </div>
+          ) : null}
+
+          <label className="native-checkbox">
+            <input type="checkbox" checked={datasetPublic} onChange={(event) => setDatasetPublic(event.target.checked)} disabled={!canOperate} />
+            <span>创建为公开数据集</span>
+          </label>
+
+          <div className="native-inline-actions">
+            <button
+              type="button"
+              className="primary"
+              onClick={handleDatasetCreate}
+              disabled={!canOperate || (datasetCreateMode === "clone" && !datasetState.selectedDataset)}
+            >
+              创建并切换
+            </button>
+          </div>
+        </div>
+
+        {renderStatusFeedback()}
+      </>
+    );
+  }
+
+  function renderDatasetBoard() {
+    return (
+      <>
+        <div className="native-workspace__section-head">
+          <p className="workspace__section-label">Setup</p>
+          <h3>先把数据集边界理顺</h3>
+          <p>当前页只处理数据集、类别和建议。确认完类别范围，再进入标注或训练，流程会更清楚。</p>
+        </div>
+
+        <div className="annotation-ops-banner annotation-ops-banner--setup">
+          <article className="annotation-ops-banner__card">
+            <span>当前数据集</span>
+            <strong>{datasetState.selectedDataset || "尚未选择"}</strong>
+            <p>{datasetState.hint || "先切换或创建一个数据集。"}</p>
+          </article>
+          <article className="annotation-ops-banner__card">
+            <span>有效类别</span>
+            <strong>{datasetState.classes.length} 个</strong>
+            <p>{selectedClass ? `当前选中 ${selectedClass}` : "先确认类别集合，再进入标注。"}</p>
+          </article>
+          <article className="annotation-ops-banner__card">
+            <span>下一步</span>
+            <strong>{datasetState.classes.length ? "进入标注" : "先准备类别"}</strong>
+            <p>{datasetState.classes.length ? "类别已经就绪，可以开始导图和框选。" : "没有类别时，不建议直接开始标注。"}</p>
+          </article>
+        </div>
+
+        <div className="annotation-workflow-grid annotation-workflow-grid--setup">
+          <section className="asset-collection">
+            <div className="asset-collection__head">
+              <div>
+                <p className="workspace__section-label">Classes</p>
+                <h3>当前类别边界</h3>
+              </div>
+              <span className="native-pill native-pill--neutral">{datasetState.classes.length} 类</span>
+            </div>
+            <div className="annotation-class-cloud">
+              {datasetState.classes.length ? (
+                datasetState.classes.map((item) => (
+                  <button
+                    key={item}
+                    type="button"
+                    className={`annotation-class-cloud__item${selectedClass === item ? " is-active" : ""}`}
+                    onClick={() => handleSelectedClassChange(item)}
+                  >
+                    {item}
+                  </button>
+                ))
+              ) : (
+                <span className="annotation-class-cloud__empty">当前还没有可用类别，先从模板建库或手动补充类别。</span>
+              )}
+            </div>
+          </section>
+
+          <section className="asset-collection">
+            <div className="asset-collection__head">
+              <div>
+                <p className="workspace__section-label">Advice</p>
+                <h3>当前类别建议</h3>
+              </div>
+              <span className="native-pill native-pill--neutral">{selectedClass || "未选择"}</span>
+            </div>
+            {selectedClassAdvice ? (
+              <div className="annotation-advice-card">
+                <div className="annotation-advice-card__head">
+                  <strong>{selectedClassAdvice.class_name}</strong>
+                  <span>知识库建议</span>
+                </div>
+                <p>{selectedClassAdvice.summary}</p>
+                {selectedClassAdvice.detail ? <p className="annotation-advice-card__meta">{selectedClassAdvice.detail}</p> : null}
+                <ul className="native-list native-list--stacked">
+                  {selectedClassAdvice.advice.map((item) => (
+                    <li key={item} className="native-list__item native-list__item--stacked">
+                      <span>{item}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : (
+              <div className="native-empty native-empty--compact">
+                <p>选择一个类别后，这里会显示知识库建议，方便你决定标注边界。</p>
+              </div>
+            )}
+          </section>
+        </div>
+
+        <div className="annotation-toolbar annotation-toolbar--setup">
+          <div className="annotation-toolbar__group">
+            <button type="button" className="secondary" onClick={() => imageInputRef.current?.click()} disabled={!canOperate}>
+              直接导入图片
+            </button>
+            <button type="button" className="primary" onClick={() => setAnnotationView("annotate")} disabled={!datasetState.selectedDataset || !datasetState.classes.length}>
+              进入标注
+            </button>
+            <button type="button" className="secondary" onClick={() => setAnnotationView("train")} disabled={!datasetState.selectedDataset || !datasetState.classes.length}>
+              进入训练
+            </button>
+          </div>
+        </div>
+      </>
+    );
+  }
+
+  function renderAnnotateControls() {
+    return (
+      <>
+        <div className="annotation-intro-card annotation-intro-card--compact">
+          <div>
+            <span>当前数据集</span>
+            <strong>{datasetState.selectedDataset || "尚未选择"}</strong>
+          </div>
+          <div>
+            <span>当前类别</span>
+            <strong>{selectedClass || "未选择"}</strong>
+          </div>
+          <div>
+            <span>当前图片</span>
+            <strong>{imageFile?.name || "未载入"}</strong>
+          </div>
+        </div>
+
+        <div className="annotation-compact-grid">
+          <label className="native-field">
+            <span>切换数据集</span>
+            <select value={datasetState.selectedDataset} onChange={(event) => reloadAnnotationData(event.target.value)} disabled={!canOperate || datasetState.loading}>
+              {!datasetState.datasetItems.length ? <option value="">{datasetState.loading ? "正在加载..." : "暂无数据集"}</option> : null}
+              {datasetState.datasetItems.map((item) => (
+                <option key={item.name} value={item.name}>
+                  {item.name}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="native-field">
+            <span>当前类别</span>
+            <select value={selectedClass} onChange={(event) => handleSelectedClassChange(event.target.value)} disabled={!canOperate || !datasetState.classes.length}>
+              {!datasetState.classes.length ? <option value="">暂无类别</option> : null}
+              {datasetState.classes.map((item) => (
+                <option key={item} value={item}>
+                  {item}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <div className="native-inline-actions">
+            <input value={customClass} onChange={(event) => setCustomClass(event.target.value)} placeholder="快速新增类别" disabled={!canOperate || !canWrite} />
+            <button type="button" className="secondary" onClick={handleAddClass} disabled={!canOperate || !canWrite || !customClass.trim()}>
+              添加类别
+            </button>
+            <button type="button" className="secondary" onClick={handleDeleteClass} disabled={!canOperate || !canWrite || !selectedClass || datasetState.classes.length <= 1}>
+              删除类别
+            </button>
+          </div>
+        </div>
+
+        <div className="annotation-toolbar annotation-toolbar--compact">
+          <div className="annotation-toolbar__group">
+            <button type="button" className="primary" onClick={() => imageInputRef.current?.click()} disabled={!canOperate}>
+              选择标注图片
+            </button>
+            <button type="button" className="secondary" onClick={handleUseRecognitionImage} disabled={!canOperate || !recognitionPayload?.file}>
+              使用识别图片
+            </button>
+            <button
+              type="button"
+              className="secondary"
+              onClick={handleImportDetections}
+              disabled={!canOperate || !recognitionPayload?.result?.detections?.length || !imageFile}
+            >
+              导入识别框
+            </button>
+            <button type="button" className="secondary" onClick={() => setFocusMode(true)} disabled={!imageUrl}>
+              专注标注
+            </button>
+          </div>
+          <div className="annotation-toolbar__group">
+            <button type="button" className="secondary" onClick={() => setBoxes([])} disabled={!canOperate || !boxes.length}>
+              清空标注
+            </button>
+            <button type="button" className="secondary" onClick={handleDeleteSelectedBox} disabled={!canOperate || selectedIndex < 0}>
+              删除选中框
+            </button>
+            <button
+              type="button"
+              className="primary"
+              onClick={handleSaveAnnotations}
+              disabled={!canOperate || !canWrite || !imageFile || !boxes.length || saving}
+            >
+              {saving ? "保存中..." : "保存标注"}
+            </button>
+            <button type="button" className="secondary" onClick={() => setAnnotationView("train")} disabled={!datasetState.selectedDataset || !datasetState.classes.length}>
+              进入训练
+            </button>
+          </div>
+        </div>
+
+        {selectedClassAdvice ? (
+          <div className="annotation-advice-card">
+            <div className="annotation-advice-card__head">
+              <strong>{selectedClassAdvice.class_name}</strong>
+              <span>当前类别建议</span>
+            </div>
+            <p>{selectedClassAdvice.summary}</p>
+            {selectedClassAdvice.detail ? <p className="annotation-advice-card__meta">{selectedClassAdvice.detail}</p> : null}
+          </div>
+        ) : null}
+
+        {renderStatusFeedback()}
+      </>
+    );
+  }
+
+  function renderAnnotateBoard() {
+    return (
+      <>
+        <div className="native-workspace__section-head">
+          <p className="workspace__section-label">Canvas</p>
+          <h3>标注画面</h3>
+          <p>图片导入、识别框复用、保存和框选都围绕同一块画布，避免右侧再拉出另一套操作区。</p>
+        </div>
+
+        <div className="annotation-ops-banner annotation-ops-banner--annotate">
+          <article className="annotation-ops-banner__card">
+            <span>类别范围</span>
+            <strong>{selectedDatasetTemplateLabel}</strong>
+            <p>{datasetState.classes.length ? `当前共 ${datasetState.classes.length} 个有效类别。` : "当前还没有可标注类别。"}</p>
+          </article>
+          <article className="annotation-ops-banner__card">
+            <span>当前图片</span>
+            <strong>{imageFile?.name || "未载入"}</strong>
+            <p>{imageFile ? `已准备 ${boxes.length} 个标注框。` : "可从本地上传，也可直接复用识别页图片。"}</p>
+          </article>
+          <article className="annotation-ops-banner__card">
+            <span>当前状态</span>
+            <strong>{selectedBox ? `已选中 ${selectedBox.label}` : "等待框选"}</strong>
+            <p>{selectedBox ? "可以删除、修改类别或继续精修边界。" : "拖拽画布即可开始标注。"}</p>
+          </article>
+        </div>
+
+        <div className="annotation-board__main">
+          <div className="annotation-stage-wrap">
+            {renderAnnotationStageSurface()}
+
+            <div className="annotation-stage__caption">
+              <span>
+                {datasetState.classes.length
+                  ? "拖拽画布即可框选。点击已有框可以快速切换到对应类别。"
+                  : "当前数据集还没有类别，请先回到数据集准备补齐类别。"}
+              </span>
+              <strong>{selectedBox ? `当前选中：${selectedBox.label}` : "当前未选中任何标注框"}</strong>
+            </div>
+          </div>
+
+          <aside className="annotation-context">
+            <div className="annotation-context-card">
+              <p className="workspace__section-label">Selected</p>
+              <h4>当前选中项</h4>
+              {selectedBox ? (
+                <ul className="annotation-context-list">
+                  <li>
+                    <span>类别</span>
+                    <strong>{selectedBox.label}</strong>
+                  </li>
+                  <li>
+                    <span>来源</span>
+                    <strong>{selectedBox.source === "assist" ? "识别辅助" : "手动标注"}</strong>
+                  </li>
+                  <li>
+                    <span>坐标</span>
+                    <strong>
+                      {Math.round(selectedBox.x1)}, {Math.round(selectedBox.y1)} · {Math.round(selectedBox.x2)}, {Math.round(selectedBox.y2)}
+                    </strong>
+                  </li>
+                </ul>
+              ) : (
+                <p>点击画布中的任意标注框后，这里会显示类别、来源和坐标。</p>
+              )}
+            </div>
+
+            <div className="annotation-context-card">
+              <p className="workspace__section-label">Dataset</p>
+              <h4>当前类别边界</h4>
+              <p>{selectedDatasetTemplateLabel}</p>
+              <div className="annotation-context-pills">
+                <span className="native-pill native-pill--neutral">{datasetState.classes.length} 个类别</span>
+                <span className="native-pill native-pill--neutral">{datasetState.counts.source} 张原始样本</span>
+              </div>
+            </div>
+          </aside>
+        </div>
+
+        <section className="asset-collection">
+          <div className="asset-collection__head">
+            <div>
+              <p className="workspace__section-label">Boxes</p>
+              <h3>标注列表</h3>
+            </div>
+            <span className="native-pill native-pill--neutral">{boxes.length} 个框</span>
+          </div>
+          {!boxes.length ? (
+            <div className="native-empty native-empty--compact">
+              <p>开始框选或导入识别框后，这里会显示所有标注项。</p>
+            </div>
+          ) : (
+            <ul className="native-list native-list--stacked">
+              {boxes.map((box, index) => (
+                <li key={`${box.label}-${index}`} className={`native-list__item native-list__item--stacked${selectedIndex === index ? " is-active" : ""}`}>
+                  <button
+                    type="button"
+                    className="native-list__button"
+                    onClick={() => {
+                      setSelectedIndex(index);
+                      setSelectedClass(box.label);
+                    }}
+                  >
+                    <strong>{box.label}</strong>
+                    <span>{box.source === "assist" ? "识别辅助" : "手动标注"}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      </>
+    );
+  }
+
+  function renderTrainingControls() {
+    return (
+      <>
+        <div className="annotation-intro-card annotation-intro-card--compact">
+          <div>
+            <span>当前数据集</span>
+            <strong>{datasetState.selectedDataset || "尚未选择"}</strong>
+          </div>
+          <div>
+            <span>类别数量</span>
+            <strong>{datasetState.classes.length} 类</strong>
+          </div>
+          <div>
+            <span>训练状态</span>
+            <strong>{trainTask?.status || (training ? "训练中" : "待启动")}</strong>
+          </div>
+        </div>
+
+        <label className="native-field">
+          <span>切换数据集</span>
+          <select value={datasetState.selectedDataset} onChange={(event) => reloadAnnotationData(event.target.value)} disabled={!canOperate || datasetState.loading}>
+            {!datasetState.datasetItems.length ? <option value="">{datasetState.loading ? "正在加载..." : "暂无数据集"}</option> : null}
+            {datasetState.datasetItems.map((item) => (
+              <option key={item.name} value={item.name}>
+                {item.name}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <div className="annotation-training-grid annotation-training-grid--panel">
+          <label className="native-field">
+            <span>增强份数</span>
+            <input type="number" min="1" value={augmentCopies} onChange={(event) => setAugmentCopies(event.target.value)} disabled={!canOperate || !canWrite} />
+          </label>
+          <label className="native-field">
+            <span>基础模型</span>
+            <input
+              list="annotation-base-models"
+              value={trainForm.baseModel}
+              onChange={(event) => setTrainForm((current) => ({ ...current, baseModel: event.target.value }))}
+              placeholder="例如 yolov8n.pt"
+              disabled={!canOperate}
+            />
+            <datalist id="annotation-base-models">
+              {models.map((item) => (
+                <option key={item} value={item} />
+              ))}
+            </datalist>
+          </label>
+          <label className="native-field">
+            <span>输出模型名</span>
+            <input
+              value={trainForm.modelName}
+              onChange={(event) => setTrainForm((current) => ({ ...current, modelName: event.target.value }))}
+              placeholder="可选"
+              disabled={!canOperate}
+            />
+          </label>
+          <label className="native-field">
+            <span>Epochs</span>
+            <input type="number" min="1" value={trainForm.epochs} onChange={(event) => setTrainForm((current) => ({ ...current, epochs: event.target.value }))} disabled={!canOperate} />
+          </label>
+          <label className="native-field">
+            <span>Imgsz</span>
+            <input type="number" min="32" value={trainForm.imgsz} onChange={(event) => setTrainForm((current) => ({ ...current, imgsz: event.target.value }))} disabled={!canOperate} />
+          </label>
+        </div>
+
+        <div className="native-inline-actions">
+          <button
+            type="button"
+            className="secondary"
+            onClick={handleAugment}
+            disabled={!canOperate || !canWrite || !datasetState.selectedDataset || augmenting}
+          >
+            {augmenting ? "增强中..." : "执行增强并划分 train/val"}
+          </button>
+          <button type="button" className="secondary" onClick={() => setAnnotationView("annotate")} disabled={!datasetState.selectedDataset}>
+            回到标注
+          </button>
+          <button type="button" className="primary" onClick={handleTrain} disabled={!canOperate || !datasetState.selectedDataset || !datasetState.classes.length || training}>
+            {training ? "训练中..." : "启动训练"}
+          </button>
+        </div>
+
+        {renderStatusFeedback()}
+      </>
+    );
+  }
+
+  function renderTrainingBoard() {
+    return (
+      <>
+        <div className="native-workspace__section-head">
+          <p className="workspace__section-label">Train</p>
+          <h3>增强与训练</h3>
+          <p>这一屏只关心增强、训练配置和进度结果，不再混入标注画布和类别编辑。</p>
+        </div>
+
+        <div className="annotation-ops-banner annotation-ops-banner--train">
+          <article className="annotation-ops-banner__card">
+            <span>原始样本</span>
+            <strong>{datasetState.counts.source}</strong>
+            <p>当前数据集可用于增强和切分的原始图片数量。</p>
+          </article>
+          <article className="annotation-ops-banner__card">
+            <span>训练集</span>
+            <strong>{datasetState.counts.train}</strong>
+            <p>执行增强后，训练集数量会在这里同步更新。</p>
+          </article>
+          <article className="annotation-ops-banner__card">
+            <span>验证集</span>
+            <strong>{datasetState.counts.val}</strong>
+            <p>当前验证集规模，便于快速判断数据切分是否生效。</p>
+          </article>
+        </div>
+
+        <div className="annotation-workflow-grid annotation-workflow-grid--train">
+          <section className="asset-collection">
+            <div className="asset-collection__head">
+              <div>
+                <p className="workspace__section-label">Progress</p>
+                <h3>训练进度</h3>
+              </div>
+              <span className={`native-pill ${training ? "native-pill--warm" : "native-pill--neutral"}`}>
+                {trainTask?.status || "待启动"}
+              </span>
+            </div>
+
+            <div className="recognition-advice">
+              {trainTask ? (
+                <div className="train-progress">
+                  <div className="train-progress__bar">
+                    <span style={{ width: formatPercent(trainTask.progress) }} />
+                  </div>
+                  <div className="train-progress__meta">
+                    <strong>{formatPercent(trainTask.progress)}</strong>
+                    <span>{trainTask.message || trainTask.stage || trainTask.status}</span>
+                  </div>
+                  <ul className="native-list native-list--stacked">
+                    <li className="native-list__item native-list__item--stacked">
+                      <span>状态：{trainTask.status}</span>
+                    </li>
+                    <li className="native-list__item native-list__item--stacked">
+                      <span>轮次：{trainTask.current_epoch || 0} / {trainTask.total_epochs || "--"}</span>
+                    </li>
+                    {trainTask.result?.model_name ? (
+                      <li className="native-list__item native-list__item--stacked">
+                        <span>输出模型：{trainTask.result.model_name}</span>
+                      </li>
+                    ) : null}
+                  </ul>
+                </div>
+              ) : (
+                <div className="native-empty native-empty--compact">
+                  <p>启动训练任务后，这里会显示进度、阶段和结果模型。</p>
+                </div>
+              )}
+            </div>
+          </section>
+
+          <section className="asset-collection">
+            <div className="asset-collection__head">
+              <div>
+                <p className="workspace__section-label">Dataset</p>
+                <h3>训练前检查</h3>
+              </div>
+              <span className="native-pill native-pill--neutral">{datasetState.selectedDataset || "未选择"}</span>
+            </div>
+
+            <div className="annotation-context-card">
+              <p className="workspace__section-label">Ready Check</p>
+              <h4>当前数据准备度</h4>
+              <div className="annotation-context-pills">
+                <span className="native-pill native-pill--neutral">{datasetState.classes.length} 个类别</span>
+                <span className="native-pill native-pill--neutral">{boxes.length} 个当前框</span>
+                <span className={`native-pill ${canWrite ? "native-pill--accent" : "native-pill--neutral"}`}>{canWrite ? "可写入" : "只读"}</span>
+              </div>
+              <p>
+                {datasetState.classes.length
+                  ? "类别集合已经准备好，可以执行增强并启动训练。"
+                  : "当前数据集还没有类别，请先回到数据集准备。"}
+              </p>
+            </div>
+          </section>
+        </div>
+      </>
+    );
+  }
+
   const focusOverlay = focusMode && imageUrl ? createPortal(
     <div className="annotation-focus" role="dialog" aria-modal="true" aria-label="专注标注模式">
       <div className="annotation-focus__shell">
@@ -797,522 +1607,39 @@ export function AnnotationWorkspace({
   return (
     <>
       <section className="native-workspace native-workspace--annotation">
+        <input ref={imageInputRef} className="native-file-input" type="file" accept="image/*" onChange={handleImageChange} disabled={!canOperate} />
+
         <div className="native-workspace__panel native-workspace__panel--controls annotation-sidebar">
           <div className="native-workspace__section-head">
             <p className="workspace__section-label">Annotation</p>
-            <h3>标注与训练工位</h3>
-            <p>先定义数据集的作物类别边界，再进入画布标注和增强训练，避免不同作物类别混入同一套标签。</p>
+            <h3>{currentAnnotationTab.label}</h3>
           </div>
 
-          <div className="annotation-intro-card">
-            <div>
-              <span>当前数据集</span>
-              <strong>{datasetState.selectedDataset || "尚未选择"}</strong>
-            </div>
-            <div>
-              <span>类别模板</span>
-              <strong>{selectedDatasetTemplateLabel}</strong>
-            </div>
-            <div>
-              <span>写入权限</span>
-              <strong>{canWrite ? "可写入" : "只读"}</strong>
-            </div>
-          </div>
-
-          <div className="native-workspace__group annotation-sidebar__section">
-            <div className="annotation-sidebar__section-head">
-              <div>
-                <p className="workspace__section-label">01 Dataset</p>
-                <h4>当前数据集概况</h4>
-              </div>
-              <span className={`native-pill ${canWrite ? "native-pill--accent" : "native-pill--neutral"}`}>
-                {canWrite ? "可写入" : "只读"}
-              </span>
-            </div>
-
-            <label className="native-field">
-              <span>切换数据集</span>
-              <select
-                value={datasetState.selectedDataset}
-                onChange={(event) => reloadAnnotationData(event.target.value)}
-                disabled={!canOperate || datasetState.loading}
-              >
-                {!datasetState.datasetItems.length ? <option value="">{datasetState.loading ? "正在加载..." : "暂无数据集"}</option> : null}
-                {datasetState.datasetItems.map((item) => (
-                  <option key={item.name} value={item.name}>
-                    {item.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <div className="annotation-dataset-overview">
-              <article className="annotation-dataset-overview__card">
-                <span>所属</span>
-                <strong>{getDatasetOwnerLabel(datasetState.datasetMeta)}</strong>
-              </article>
-              <article className="annotation-dataset-overview__card">
-                <span>开放性</span>
-                <strong>{datasetState.datasetMeta?.is_public ? "公开数据集" : "私有数据集"}</strong>
-              </article>
-              <article className="annotation-dataset-overview__card">
-                <span>类别范围</span>
-                <strong>{selectedDatasetTemplateLabel}</strong>
-              </article>
-            </div>
-
-            <p className="native-hint">{datasetState.hint || "创建数据集后即可开始保存标注。"}</p>
-
-            <div className="annotation-sidebar__stats">
-              <article className="annotation-sidebar__stat">
-                <span>原始样本</span>
-                <strong>{datasetState.counts.source}</strong>
-              </article>
-              <article className="annotation-sidebar__stat">
-                <span>Train</span>
-                <strong>{datasetState.counts.train}</strong>
-              </article>
-              <article className="annotation-sidebar__stat">
-                <span>Val</span>
-                <strong>{datasetState.counts.val}</strong>
-              </article>
-            </div>
-
-            <div className="native-inline-actions">
-              <button type="button" className="secondary" onClick={handleDatasetDownload} disabled={!canOperate || !datasetState.selectedDataset}>
-                下载数据集
-              </button>
-              <button type="button" className="secondary" onClick={handleDatasetDelete} disabled={!canOperate || !datasetState.selectedDataset || !canWrite}>
-                删除数据集
-              </button>
-            </div>
-          </div>
-
-          <div className="native-workspace__group annotation-sidebar__section">
-            <div className="annotation-sidebar__section-head">
-              <div>
-                <p className="workspace__section-label">02 Create</p>
-                <h4>新建数据集</h4>
-              </div>
-              <span className="native-pill native-pill--neutral">
-                {datasetCreateMode === "template" ? "模板建库" : "复制类别"}
-              </span>
-            </div>
-
-            <div className="annotation-mode-switch">
+          <div className="annotation-workspace-switch" role="tablist" aria-label="标注工作流阶段">
+            {annotationViewTabs.map((item) => (
               <button
+                key={item.id}
                 type="button"
-                className={`annotation-mode-switch__item${datasetCreateMode === "template" ? " is-active" : ""}`}
-                onClick={() => setDatasetCreateMode("template")}
+                role="tab"
+                aria-selected={annotationView === item.id}
+                className={`annotation-workspace-switch__item${annotationView === item.id ? " is-active" : ""}`}
+                onClick={() => setAnnotationView(item.id)}
               >
-                按作物模板创建
+                <span>{item.label}</span>
+                <strong>{item.summary}</strong>
               </button>
-              <button
-                type="button"
-                className={`annotation-mode-switch__item${datasetCreateMode === "clone" ? " is-active" : ""}`}
-                onClick={() => setDatasetCreateMode("clone")}
-              >
-                复制当前类别库
-              </button>
-            </div>
-
-            <label className="native-field">
-              <span>数据集名称</span>
-              <input
-                value={datasetCreateName}
-                onChange={(event) => setDatasetCreateName(event.target.value)}
-                placeholder="例如 corn_leaf_stage2"
-                disabled={!canOperate}
-              />
-            </label>
-
-            {datasetCreateMode === "template" ? (
-              <div className="annotation-template-grid">
-                {visibleTemplateCards.map((template) => (
-                  <button
-                    key={template.key}
-                    type="button"
-                    className={`annotation-template-card${datasetTemplateKey === template.key ? " is-active" : ""}`}
-                    onClick={() => setDatasetTemplateKey(template.key)}
-                    disabled={!canOperate}
-                  >
-                    <div className="annotation-template-card__head">
-                      <strong>{template.label}</strong>
-                      <span>{template.class_count} 类</span>
-                    </div>
-                    <p>{template.description}</p>
-                    <div className="annotation-template-card__preview">
-                      {template.classes.slice(0, 3).map((item) => (
-                        <span key={item}>{item}</span>
-                      ))}
-                      {!template.classes.length ? <span>空白起步</span> : null}
-                    </div>
-                  </button>
-                ))}
-              </div>
-            ) : (
-              <div className="annotation-clone-card">
-                <strong>{datasetState.selectedDataset || "暂无可复制数据集"}</strong>
-                <p>复制模式会沿用当前数据集的类别集合，适合做版本迭代或精修集。</p>
-              </div>
-            )}
-
-            {datasetCreateMode === "template" && createTemplate ? (
-              <div className="annotation-template-summary">
-                <strong>{createTemplate.label}</strong>
-                <p>{createTemplate.description}</p>
-              </div>
-            ) : null}
-
-            <label className="native-checkbox">
-              <input type="checkbox" checked={datasetPublic} onChange={(event) => setDatasetPublic(event.target.checked)} disabled={!canOperate} />
-              <span>创建为公开数据集</span>
-            </label>
-
-            <div className="native-inline-actions">
-              <button
-                type="button"
-                className="primary"
-                onClick={handleDatasetCreate}
-                disabled={!canOperate || (datasetCreateMode === "clone" && !datasetState.selectedDataset)}
-              >
-                创建并切换
-              </button>
-            </div>
+            ))}
           </div>
 
-          <div className="native-workspace__group annotation-sidebar__section">
-            <div className="annotation-sidebar__section-head">
-              <div>
-                <p className="workspace__section-label">03 Classes</p>
-                <h4>类别库与建议</h4>
-              </div>
-              <span className="native-pill native-pill--neutral">{datasetState.classes.length} 类</span>
-            </div>
-
-            <label className="native-field">
-              <span>当前类别</span>
-              <select value={selectedClass} onChange={(event) => handleSelectedClassChange(event.target.value)} disabled={!canOperate || !datasetState.classes.length}>
-                {!datasetState.classes.length ? <option value="">暂无类别</option> : null}
-                {datasetState.classes.map((item) => (
-                  <option key={item} value={item}>
-                    {item}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <div className="native-inline-actions">
-              <input value={customClass} onChange={(event) => setCustomClass(event.target.value)} placeholder="新增类别，例如 Corn leaf curl" disabled={!canOperate || !canWrite} />
-              <button type="button" className="secondary" onClick={handleAddClass} disabled={!canOperate || !canWrite}>
-                添加
-              </button>
-              <button type="button" className="secondary" onClick={handleDeleteClass} disabled={!canOperate || !canWrite || !selectedClass || datasetState.classes.length <= 1}>
-                删除
-              </button>
-            </div>
-
-            <div className="annotation-class-cloud">
-              {datasetState.classes.length ? (
-                datasetState.classes.map((item) => (
-                  <button
-                    key={item}
-                    type="button"
-                    className={`annotation-class-cloud__item${selectedClass === item ? " is-active" : ""}`}
-                    onClick={() => handleSelectedClassChange(item)}
-                  >
-                    {item}
-                  </button>
-                ))
-              ) : (
-                <span className="annotation-class-cloud__empty">当前数据集还没有类别，先选模板或手动新增类别。</span>
-              )}
-            </div>
-
-            {selectedClassAdvice ? (
-              <div className="annotation-advice-card">
-                <div className="annotation-advice-card__head">
-                  <strong>{selectedClassAdvice.class_name}</strong>
-                  <span>知识库建议</span>
-                </div>
-                <p>{selectedClassAdvice.summary}</p>
-                {selectedClassAdvice.detail ? <p className="annotation-advice-card__meta">{selectedClassAdvice.detail}</p> : null}
-                <ul className="native-list native-list--stacked">
-                  {selectedClassAdvice.advice.map((item) => (
-                    <li key={item} className="native-list__item native-list__item--stacked">
-                      <span>{item}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ) : (
-              <div className="annotation-advice-card annotation-advice-card--placeholder">
-                <div className="annotation-advice-card__head">
-                  <strong>{selectedClass || "尚未选择类别"}</strong>
-                  <span>建议区</span>
-                </div>
-                <p>新增类别后会自动调用实验室大模型生成建议并写入知识库缓存，后续识别和推荐会直接复用。</p>
-              </div>
-            )}
-          </div>
-
-          <div className="native-feedback">
-            <p>{status}</p>
-            {error ? <strong>{error}</strong> : null}
-          </div>
+          {annotationView === "dataset" ? renderDatasetControls() : null}
+          {annotationView === "annotate" ? renderAnnotateControls() : null}
+          {annotationView === "train" ? renderTrainingControls() : null}
         </div>
 
         <div className="native-workspace__panel native-workspace__panel--canvas annotation-board">
-          <div className="native-workspace__section-head">
-            <p className="workspace__section-label">Canvas</p>
-            <h3>标注执行面板</h3>
-            <p>图片导入、识别框复用、保存和训练都围绕同一块画布组织，减少来回切换。</p>
-          </div>
-
-          <input ref={imageInputRef} className="native-file-input" type="file" accept="image/*" onChange={handleImageChange} disabled={!canOperate} />
-
-          <div className="annotation-ops-banner">
-            <article className="annotation-ops-banner__card">
-              <span>类别范围</span>
-              <strong>{selectedDatasetTemplateLabel}</strong>
-              <p>{datasetState.classes.length ? `当前共 ${datasetState.classes.length} 个有效类别。` : "当前还没有可标注类别。"}</p>
-            </article>
-            <article className="annotation-ops-banner__card">
-              <span>当前图片</span>
-              <strong>{imageFile?.name || "未载入"}</strong>
-              <p>{imageFile ? `已准备 ${boxes.length} 个标注框。` : "可从本地上传，也可直接复用识别页图片。"}</p>
-            </article>
-            <article className="annotation-ops-banner__card">
-              <span>训练状态</span>
-              <strong>{trainTask?.status || "待启动"}</strong>
-              <p>{trainTask?.message || "增强和训练会在下方工作流区域持续显示。"}</p>
-            </article>
-          </div>
-
-          <div className="annotation-toolbar">
-            <div className="annotation-toolbar__group">
-              <button type="button" className="primary" onClick={() => setFocusMode(true)} disabled={!imageUrl}>
-                专注标注
-              </button>
-              <button type="button" className="secondary" onClick={() => imageInputRef.current?.click()} disabled={!canOperate}>
-                选择标注图片
-              </button>
-              <button type="button" className="secondary" onClick={handleUseRecognitionImage} disabled={!canOperate || !recognitionPayload?.file}>
-                使用识别图片
-              </button>
-              <button
-                type="button"
-                className="secondary"
-                onClick={handleImportDetections}
-                disabled={!canOperate || !recognitionPayload?.result?.detections?.length || !imageFile}
-              >
-                导入识别框
-              </button>
-            </div>
-            <div className="annotation-toolbar__group">
-              <button type="button" className="secondary" onClick={() => setBoxes([])} disabled={!canOperate || !boxes.length}>
-                清空标注
-              </button>
-              <button type="button" className="secondary" onClick={handleDeleteSelectedBox} disabled={!canOperate || selectedIndex < 0}>
-                删除选中框
-              </button>
-              <button
-                type="button"
-                className="primary"
-                onClick={handleSaveAnnotations}
-                disabled={!canOperate || !canWrite || !imageFile || !boxes.length || saving}
-              >
-                {saving ? "保存中..." : "保存标注"}
-              </button>
-            </div>
-          </div>
-
-          <div className="annotation-board__main">
-            <div className="annotation-stage-wrap">
-              {renderAnnotationStageSurface()}
-
-              <div className="annotation-stage__caption">
-                <span>
-                  {datasetState.classes.length
-                    ? "拖拽画布即可框选。点击已有框可以快速切换到对应类别。"
-                    : "当前数据集还没有类别，请先在左侧选择模板或手动新增类别。"}
-                </span>
-                <strong>{selectedBox ? `当前选中：${selectedBox.label}` : "当前未选中任何标注框"}</strong>
-              </div>
-            </div>
-
-            <aside className="annotation-context">
-              <div className="annotation-context-card">
-                <p className="workspace__section-label">Selected</p>
-                <h4>当前选中项</h4>
-                {selectedBox ? (
-                  <ul className="annotation-context-list">
-                    <li>
-                      <span>类别</span>
-                      <strong>{selectedBox.label}</strong>
-                    </li>
-                    <li>
-                      <span>来源</span>
-                      <strong>{selectedBox.source === "assist" ? "识别辅助" : "手动标注"}</strong>
-                    </li>
-                    <li>
-                      <span>坐标</span>
-                      <strong>
-                        {Math.round(selectedBox.x1)}, {Math.round(selectedBox.y1)} · {Math.round(selectedBox.x2)}, {Math.round(selectedBox.y2)}
-                      </strong>
-                    </li>
-                  </ul>
-                ) : (
-                  <p>点击画布中的任意标注框后，这里会显示类别、来源和坐标。</p>
-                )}
-              </div>
-
-              <div className="annotation-context-card">
-                <p className="workspace__section-label">Dataset</p>
-                <h4>当前类别边界</h4>
-                <p>{selectedDatasetTemplateLabel}</p>
-                <div className="annotation-context-pills">
-                  <span className="native-pill native-pill--neutral">{datasetState.classes.length} 个类别</span>
-                  <span className="native-pill native-pill--neutral">{datasetState.counts.source} 张原始样本</span>
-                </div>
-              </div>
-            </aside>
-          </div>
-
-          <div className="annotation-workflow-grid">
-            <section className="asset-collection">
-              <div className="asset-collection__head">
-                <div>
-                  <p className="workspace__section-label">Boxes</p>
-                  <h3>标注列表</h3>
-                </div>
-                <span className="native-pill native-pill--neutral">{boxes.length} 个框</span>
-              </div>
-              {!boxes.length ? (
-                <div className="native-empty native-empty--compact">
-                  <p>开始框选或导入识别框后，这里会显示所有标注项。</p>
-                </div>
-              ) : (
-                <ul className="native-list native-list--stacked">
-                  {boxes.map((box, index) => (
-                    <li key={`${box.label}-${index}`} className={`native-list__item native-list__item--stacked${selectedIndex === index ? " is-active" : ""}`}>
-                      <button
-                        type="button"
-                        className="native-list__button"
-                        onClick={() => {
-                          setSelectedIndex(index);
-                          setSelectedClass(box.label);
-                        }}
-                      >
-                        <strong>{box.label}</strong>
-                        <span>{box.source === "assist" ? "识别辅助" : "手动标注"}</span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </section>
-
-            <section className="asset-collection">
-              <div className="asset-collection__head">
-                <div>
-                  <p className="workspace__section-label">Workflow</p>
-                  <h3>增强与训练</h3>
-                </div>
-                <span className={`native-pill ${training ? "native-pill--warm" : "native-pill--neutral"}`}>
-                  {trainTask?.status || "待启动"}
-                </span>
-              </div>
-
-              <div className="annotation-training-grid">
-                <label className="native-field">
-                  <span>增强份数</span>
-                  <input type="number" min="1" value={augmentCopies} onChange={(event) => setAugmentCopies(event.target.value)} disabled={!canOperate || !canWrite} />
-                </label>
-                <div className="annotation-training-action">
-                  <button
-                    type="button"
-                    className="secondary"
-                    onClick={handleAugment}
-                    disabled={!canOperate || !canWrite || !datasetState.selectedDataset || augmenting}
-                  >
-                    {augmenting ? "增强中..." : "执行增强并划分 train/val"}
-                  </button>
-                </div>
-                <label className="native-field">
-                  <span>基础模型</span>
-                  <input
-                    list="annotation-base-models"
-                    value={trainForm.baseModel}
-                    onChange={(event) => setTrainForm((current) => ({ ...current, baseModel: event.target.value }))}
-                    placeholder="例如 yolov8n.pt"
-                    disabled={!canOperate}
-                  />
-                  <datalist id="annotation-base-models">
-                    {models.map((item) => (
-                      <option key={item} value={item} />
-                    ))}
-                  </datalist>
-                </label>
-                <label className="native-field">
-                  <span>输出模型名</span>
-                  <input
-                    value={trainForm.modelName}
-                    onChange={(event) => setTrainForm((current) => ({ ...current, modelName: event.target.value }))}
-                    placeholder="可选"
-                    disabled={!canOperate}
-                  />
-                </label>
-                <label className="native-field">
-                  <span>Epochs</span>
-                  <input type="number" min="1" value={trainForm.epochs} onChange={(event) => setTrainForm((current) => ({ ...current, epochs: event.target.value }))} disabled={!canOperate} />
-                </label>
-                <label className="native-field">
-                  <span>Imgsz</span>
-                  <input type="number" min="32" value={trainForm.imgsz} onChange={(event) => setTrainForm((current) => ({ ...current, imgsz: event.target.value }))} disabled={!canOperate} />
-                </label>
-              </div>
-
-              <button type="button" className="primary" onClick={handleTrain} disabled={!canOperate || !datasetState.selectedDataset || !datasetState.classes.length || training}>
-                {training ? "训练中..." : "启动训练"}
-              </button>
-
-              <div className="recognition-advice">
-                <div className="native-workspace__section-head native-workspace__section-head--tight">
-                  <h3>训练进度</h3>
-                  <p>训练启动后在这里持续刷新状态，不再占用左侧配置区。</p>
-                </div>
-                {trainTask ? (
-                  <div className="train-progress">
-                    <div className="train-progress__bar">
-                      <span style={{ width: formatPercent(trainTask.progress) }} />
-                    </div>
-                    <div className="train-progress__meta">
-                      <strong>{formatPercent(trainTask.progress)}</strong>
-                      <span>{trainTask.message || trainTask.stage || trainTask.status}</span>
-                    </div>
-                    <ul className="native-list native-list--stacked">
-                      <li className="native-list__item native-list__item--stacked">
-                        <span>状态：{trainTask.status}</span>
-                      </li>
-                      <li className="native-list__item native-list__item--stacked">
-                        <span>轮次：{trainTask.current_epoch || 0} / {trainTask.total_epochs || "--"}</span>
-                      </li>
-                      {trainTask.result?.model_name ? (
-                        <li className="native-list__item native-list__item--stacked">
-                          <span>输出模型：{trainTask.result.model_name}</span>
-                        </li>
-                      ) : null}
-                    </ul>
-                  </div>
-                ) : (
-                  <div className="native-empty native-empty--compact">
-                    <p>启动训练任务后，这里会显示进度、阶段和结果模型。</p>
-                  </div>
-                )}
-              </div>
-            </section>
-          </div>
+          {annotationView === "dataset" ? renderDatasetBoard() : null}
+          {annotationView === "annotate" ? renderAnnotateBoard() : null}
+          {annotationView === "train" ? renderTrainingBoard() : null}
         </div>
       </section>
       {focusOverlay}

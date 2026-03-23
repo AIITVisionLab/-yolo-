@@ -21,7 +21,6 @@ function sampleAnnotationImageFile() {
 
 async function loginAsAdmin(page) {
   await page.goto("http://127.0.0.1:5500/?workspace=recognition", { waitUntil: "networkidle" });
-  await expect(page.getByRole("heading", { name: "先登录，再进入智能工作台", exact: true })).toBeVisible();
   await expect(page.getByRole("dialog", { name: "登录与注册" })).toBeVisible();
   await page.locator('input[autocomplete="username"]').fill("root");
   await page.locator('input[autocomplete="current-password"]').fill("root");

@@ -937,6 +937,7 @@ export function RecognitionWorkspace({
   const screenRecordingChunksRef = useRef([]);
   const screenRecordingUrlRef = useRef("");
   const pipWindowRef = useRef(null);
+  const detailSectionRef = useRef(null);
   const mountedRef = useRef(false);
   const previewUrlRef = useRef("");
   const tokenRef = useRef(token);
@@ -961,7 +962,7 @@ export function RecognitionWorkspace({
   const [result, setResult] = useState(() => initialPayload?.result || EMPTY_RESULT);
   const [threshold, setThreshold] = useState(10);
   const [visualizationMode, setVisualizationMode] = useState("boxes");
-  const [status, setStatus] = useState("登录后上传叶片图片即可开始识别。");
+  const [status, setStatus] = useState("上传图片后即可开始识别。");
   const [error, setError] = useState("");
   const [loadingModels, setLoadingModels] = useState(false);
   const [predicting, setPredicting] = useState(false);
@@ -976,6 +977,8 @@ export function RecognitionWorkspace({
   const [realtimeProfileId, setRealtimeProfileId] = useState(DEFAULT_REALTIME_PROFILE_ID);
   const [realtimeMetrics, setRealtimeMetrics] = useState(EMPTY_REALTIME_METRICS);
   const [pipContainer, setPipContainer] = useState(null);
+  const [controlView, setControlView] = useState("source");
+  const [detailView, setDetailView] = useState("overview");
 
   const pictureInPictureSupported = isPictureInPictureSupported();
   const pictureInPictureActive = Boolean(pipContainer && pipWindowRef.current && !pipWindowRef.current.closed);
@@ -1627,6 +1630,7 @@ export function RecognitionWorkspace({
       return;
     }
     replacePreviewWithFile(file, `已载入图片 ${file.name}，可以直接开始识别。`);
+    setControlView("run");
   }
 
   async function handlePredict() {
@@ -1820,6 +1824,56 @@ export function RecognitionWorkspace({
     : null;
 
   const resultFilename = result?.filename || selectedFile?.name || "--";
+  const hasRecognitionResult = Boolean(
+    primaryPrediction || filteredDetections.length || visibleTopPredictions.length || adviceBundle
+  );
+  const hasPreparedInput = sourceMode === "upload"
+    ? Boolean(selectedFile)
+    : sourceMode === "camera"
+      ? cameraReady
+      : screenReady;
+  const hasFrameForManualRun = Boolean(selectedFile);
+  const sourceModeLabel = sourceMode === "upload" ? "上传图片" : sourceMode === "camera" ? "摄像头" : "屏幕采集";
+  const captureStatusText = sourceMode === "upload"
+    ? (selectedFile?.name || "还没有选择图片")
+    : sourceMode === "camera"
+      ? (cameraReady ? "摄像头已连接，可直接截帧或开实时识别" : "还没有连接摄像头")
+      : (screenReady ? "屏幕已共享，可直接截帧或开实时识别" : "还没有共享屏幕");
+  const runStatusText = hasRecognitionResult ? "已有结果" : hasFrameForManualRun ? "可以执行" : "先准备画面";
+  const controlSteps = [
+    { id: "source", label: "来源", summary: sourceModeLabel },
+    { id: "capture", label: "准备", summary: hasPreparedInput ? "已就绪" : "待准备" },
+    { id: "run", label: "执行", summary: runStatusText },
+  ];
+  const detailTabs = [
+    {
+      id: "overview",
+      label: "概览",
+      summary: `${visibleTopPredictions.length} 个候选`,
+    },
+    {
+      id: "detections",
+      label: "检测",
+      summary: `${filteredDetections.length} 条明细`,
+    },
+    {
+      id: "attention",
+      label: "关注",
+      summary: filteredDetections.length ? `${Math.min(filteredDetections.length, 2)} 张快照` : "待生成",
+    },
+    {
+      id: "analysis",
+      label: "分析",
+      summary: adviceBundle ? "已生成建议" : "等待结果",
+    },
+  ];
+
+  function handleDetailViewChange(nextView) {
+    setDetailView(nextView);
+    window.requestAnimationFrame(() => {
+      detailSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }
 
   return (
     <section className="native-workspace native-workspace--recognition">
@@ -1827,240 +1881,303 @@ export function RecognitionWorkspace({
         <div className="native-workspace__section-head">
           <p className="workspace__section-label">Recognition</p>
           <h3>病害识别</h3>
-          <p>上传叶片图片或截取实时画面，识别后可直接查看热力图、导出结果、累计统计标签并继续流转到标注训练。</p>
+          <p>右侧只保留来源、准备和执行三步，不再把采集、参数和说明堆成一列。</p>
         </div>
 
-        <div className="native-tablist" role="tablist" aria-label="识别输入来源">
-          {[
-            { id: "upload", label: "上传图片" },
-            { id: "camera", label: "摄像头" },
-            { id: "screen", label: "屏幕采集" },
-          ].map((item) => (
+        <div className="recognition-control-summary">
+          <article className="recognition-control-summary__card">
+            <span>输入源</span>
+            <strong>{sourceModeLabel}</strong>
+            <p>{captureStatusText}</p>
+          </article>
+          <article className="recognition-control-summary__card">
+            <span>当前模型</span>
+            <strong>{selectedModel || "--"}</strong>
+            <p>{loadingModels ? "正在加载模型" : isAuthenticated ? "已连接推理服务" : "登录后选择模型"}</p>
+          </article>
+        </div>
+
+        <div className="recognition-control-nav" role="tablist" aria-label="识别控制步骤">
+          {controlSteps.map((item) => (
             <button
               key={item.id}
               type="button"
-              className={`native-tablist__item${sourceMode === item.id ? " is-active" : ""}`}
-              onClick={() => setSourceMode(item.id)}
+              role="tab"
+              aria-selected={controlView === item.id}
+              className={`recognition-control-nav__item${controlView === item.id ? " is-active" : ""}`}
+              onClick={() => setControlView(item.id)}
             >
-              {item.label}
+              <span>{item.label}</span>
+              <strong>{item.summary}</strong>
             </button>
           ))}
         </div>
 
-        <div className="native-workspace__group">
-          <label className="native-field">
-            <span>推理模型</span>
-            <select value={selectedModel} onChange={(event) => setSelectedModel(event.target.value)} disabled={!isAuthenticated || loadingModels}>
-              {!availableModels.length ? <option value="">{loadingModels ? "正在加载模型..." : "暂无可用模型"}</option> : null}
-              {availableModels.map((item) => (
-                <option key={item.name} value={item.name}>
-                  {item.name}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-
         {sourceMode === "upload" ? (
-          <div className="native-workspace__group">
-            <input ref={fileInputRef} className="native-file-input" type="file" accept="image/*" onChange={handleFileChange} />
-            <button type="button" className="secondary" onClick={() => fileInputRef.current?.click()}>
-              选择图片
-            </button>
-            <p className="native-hint">支持 JPEG、PNG、WebP。识别结果、热力图和分析建议都可继续流转到标注页。</p>
-          </div>
+          <input
+            ref={fileInputRef}
+            className="native-file-input recognition-file-input"
+            type="file"
+            accept="image/*"
+            onChange={handleFileChange}
+          />
         ) : null}
 
-        {sourceMode === "camera" ? (
-          <div className="native-workspace__group">
-            <div className="native-video-box">
-              <video ref={cameraVideoRef} autoPlay muted playsInline />
-              <div className="native-video-box__overlay" aria-hidden="true">
-                {filteredDetections.map((item, index) => {
-                  const style = getBBoxStyle(item.bbox, liveOverlayMeta);
-                  if (!style) {
-                    return null;
-                  }
-                  return (
-                    <span key={`camera-live-${item.label}-${index}`} className="recognition-box recognition-box--live" style={style}>
-                      <em>{translateLabel(item.label)}</em>
-                      <strong>{formatConfidence(item.confidence)}</strong>
-                    </span>
-                  );
-                })}
+        {controlView === "source" ? (
+          <section className="recognition-control-card">
+            <div className="recognition-control-card__head">
+              <div>
+                <p className="workspace__section-label">Step 01</p>
+                <h4>选择来源和模型</h4>
               </div>
-            </div>
-            <div className="native-inline-actions native-inline-actions--triple">
-              <button type="button" className="secondary" onClick={startCamera}>
-                {cameraReady ? "重新连接摄像头" : "连接摄像头"}
-              </button>
-              <button
-                type="button"
-                className="primary"
-                onClick={() => {
-                  if (liveRecognitionEnabled) {
-                    stopLiveRecognitionLoop({ keepStatus: false });
-                    return;
-                  }
-                  startLiveRecognitionLoop({ autoOpenPictureInPicture: true });
-                }}
-                disabled={!cameraReady || (!isAuthenticated && !liveRecognitionEnabled)}
-              >
-                {liveRecognitionEnabled ? "停止实时识别" : liveRecognitionBusy ? "启动识别中..." : "开启实时识别"}
-              </button>
-              <button type="button" className="primary" onClick={() => captureFromVideo("camera")} disabled={!cameraReady}>
-                截取当前画面
+              <button type="button" className="secondary" onClick={() => setControlView("capture")}>
+                下一步
               </button>
             </div>
-            <p className="native-hint">
-              连接摄像头后会自动尝试开启实时识别，并在支持的浏览器中同步打开画中画结果窗。
-            </p>
-          </div>
-        ) : null}
 
-        {sourceMode === "screen" ? (
-          <div className="native-workspace__group">
-            <div className="native-video-box native-video-box--screen">
-              <video ref={screenVideoRef} autoPlay muted playsInline />
-              <div className="native-video-box__overlay" aria-hidden="true">
-                {filteredDetections.map((item, index) => {
-                  const style = getBBoxStyle(item.bbox, liveOverlayMeta);
-                  if (!style) {
-                    return null;
-                  }
-                  return (
-                    <span key={`screen-live-${item.label}-${index}`} className="recognition-box recognition-box--live" style={style}>
-                      <em>{translateLabel(item.label)}</em>
-                      <strong>{formatConfidence(item.confidence)}</strong>
-                    </span>
-                  );
-                })}
-              </div>
+            <div className="native-tablist" role="tablist" aria-label="识别输入来源">
+              {[
+                { id: "upload", label: "上传图片" },
+                { id: "camera", label: "摄像头" },
+                { id: "screen", label: "屏幕采集" },
+              ].map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={`native-tablist__item${sourceMode === item.id ? " is-active" : ""}`}
+                  onClick={() => {
+                    setSourceMode(item.id);
+                    setControlView("capture");
+                  }}
+                >
+                  {item.label}
+                </button>
+              ))}
             </div>
-            <div className="native-inline-actions native-inline-actions--triple">
-              <button type="button" className="secondary" onClick={startScreen}>
-                {screenReady ? "重新共享屏幕" : "共享屏幕"}
-              </button>
-              <button
-                type="button"
-                className="primary"
-                onClick={() => {
-                  if (liveRecognitionEnabled) {
-                    stopLiveRecognitionLoop({ keepStatus: false });
-                    return;
-                  }
-                  startLiveRecognitionLoop({ autoOpenPictureInPicture: true });
-                }}
-                disabled={!screenReady || (!isAuthenticated && !liveRecognitionEnabled)}
-              >
-                {liveRecognitionEnabled ? "停止实时识别" : liveRecognitionBusy ? "启动识别中..." : "开启实时识别"}
-              </button>
-              <button type="button" className="primary" onClick={() => captureFromVideo("screen")} disabled={!screenReady}>
-                截取当前画面
-              </button>
-            </div>
-            <div className="native-inline-actions">
-              <button
-                type="button"
-                className={screenRecording ? "primary" : "secondary"}
-                onClick={() => {
-                  if (screenRecording) {
-                    stopScreenRecording();
-                    return;
-                  }
-                  startScreenRecording();
-                }}
-                disabled={!screenReady}
-              >
-                {screenRecording ? "停止录屏" : "开始录屏"}
-              </button>
-              {screenRecordingDownload ? (
-                <a className="native-link" href={screenRecordingDownload.url} download={screenRecordingDownload.name}>
-                  下载录屏文件
-                </a>
-              ) : null}
-            </div>
-            <p className="native-hint">
-              共享屏幕后会自动尝试开启实时识别，并在支持的浏览器中同步打开画中画结果窗；录屏结束后会生成可直接下载的 WebM 文件。
-            </p>
-          </div>
-        ) : null}
 
-        {sourceMode === "camera" || sourceMode === "screen" ? (
-          <div className="native-workspace__group">
             <label className="native-field">
-              <span>实时采样模式</span>
-              <select value={realtimeProfileId} onChange={(event) => setRealtimeProfileId(event.target.value)}>
-                {REALTIME_PROFILE_OPTIONS.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.label} · {item.description}
+              <span>推理模型</span>
+              <select value={selectedModel} onChange={(event) => setSelectedModel(event.target.value)} disabled={!isAuthenticated || loadingModels}>
+                {!availableModels.length ? <option value="">{loadingModels ? "正在加载模型..." : "暂无可用模型"}</option> : null}
+                {availableModels.map((item) => (
+                  <option key={item.name} value={item.name}>
+                    {item.name}
                   </option>
                 ))}
               </select>
             </label>
-            <label className="native-field">
-              <span>目标实时速度 {formatFps(realtimeTargetFps)}</span>
-              <input
-                type="range"
-                min="1"
-                max="60"
-                step="0.5"
-                value={realtimeTargetFps}
-                onChange={(event) => setRealtimeTargetFps(Number(event.target.value))}
-              />
-            </label>
-            <div className="native-inline-actions">
-              <span className="native-pill native-pill--accent">目标 {formatFps(realtimeTargetFps)}</span>
-              <span className="native-pill native-pill--warm">实际 {formatFps(realtimeMetrics.actualFps)}</span>
-              <span className="native-pill native-pill--neutral">最近 {formatDurationMs(realtimeMetrics.lastRoundtripMs)}</span>
-              <span className="native-pill native-pill--neutral">推理 {formatDurationMs(result?.prediction_ms ?? realtimeMetrics.lastServerPredictionMs)}</span>
-            </div>
-            <p className="native-hint">
-              实时模式默认跳过大模型建议，仅保留轻量识别结果来提升刷新速度；停止实时识别后再点“开始识别”，会对当前画面生成完整 AI 分析。
-            </p>
-          </div>
+          </section>
         ) : null}
 
-        <div className="native-workspace__group">
-          <div className="native-inline-actions native-inline-actions--triple">
-            <button
-              type="button"
-              className="primary"
-              onClick={handlePredict}
-              disabled={predicting || liveRecognitionEnabled || !selectedFile || !isAuthenticated}
-            >
-              {predicting ? "识别中..." : "开始识别"}
-            </button>
-            <button
-              type="button"
-              className="secondary"
-              onClick={() => {
-                if (result) {
-                  onOpenAnnotation?.();
-                }
-              }}
-              disabled={!result}
-            >
-              送去标注
-            </button>
-            <button
-              type="button"
-              className="secondary"
-              onClick={togglePictureInPictureWindow}
-              disabled={!pictureInPictureSupported}
-              title={pictureInPictureSupported ? "在独立悬浮窗中查看识别结果" : "当前浏览器不支持网页画中画结果窗"}
-            >
-              {pictureInPictureActive ? "关闭画中画" : "打开画中画"}
-            </button>
-          </div>
-          <label className="native-field">
-            <span>推理置信度阈值 {threshold}%</span>
-            <input type="range" min="0" max="100" value={threshold} onChange={(event) => setThreshold(Number(event.target.value))} />
-          </label>
-          <p className="native-hint">
-            这个阈值会直接参与下一次模型推理，并同步影响检测框、热力图、候选结果、标签统计与画中画展示。
-          </p>
-        </div>
+        {controlView === "capture" ? (
+          <section className="recognition-control-card">
+            <div className="recognition-control-card__head">
+              <div>
+                <p className="workspace__section-label">Step 02</p>
+                <h4>准备识别画面</h4>
+              </div>
+              <button type="button" className="secondary" onClick={() => setControlView("run")} disabled={!hasPreparedInput}>
+                去执行
+              </button>
+            </div>
+
+            {sourceMode === "upload" ? (
+              <>
+                <div className="recognition-control-card__surface">
+                  <strong>{selectedFile ? selectedFile.name : "还没有选择图片"}</strong>
+                  <p>支持 JPEG、PNG、WebP。</p>
+                </div>
+                <button type="button" className="secondary" onClick={() => fileInputRef.current?.click()}>
+                  选择图片
+                </button>
+              </>
+            ) : null}
+
+            {sourceMode === "camera" ? (
+              <>
+                <div className="recognition-hidden-media" aria-hidden="true">
+                  <video ref={cameraVideoRef} autoPlay muted playsInline />
+                </div>
+                <div className="recognition-control-card__surface">
+                  <strong>{cameraReady ? "摄像头已连接" : "等待连接摄像头"}</strong>
+                  <p>实时结果直接回到左侧预览区，不再在右侧重复显示。</p>
+                </div>
+                <div className="native-inline-actions native-inline-actions--triple">
+                  <button type="button" className="secondary" onClick={startCamera}>
+                    {cameraReady ? "重新连接" : "连接摄像头"}
+                  </button>
+                  <button
+                    type="button"
+                    className="primary"
+                    onClick={() => {
+                      if (liveRecognitionEnabled) {
+                        stopLiveRecognitionLoop({ keepStatus: false });
+                        return;
+                      }
+                      startLiveRecognitionLoop({ autoOpenPictureInPicture: true });
+                    }}
+                    disabled={!cameraReady || (!isAuthenticated && !liveRecognitionEnabled)}
+                  >
+                    {liveRecognitionEnabled ? "停止实时识别" : liveRecognitionBusy ? "启动中..." : "开启实时识别"}
+                  </button>
+                  <button type="button" className="primary" onClick={() => captureFromVideo("camera")} disabled={!cameraReady}>
+                    截取当前画面
+                  </button>
+                </div>
+              </>
+            ) : null}
+
+            {sourceMode === "screen" ? (
+              <>
+                <div className="recognition-hidden-media" aria-hidden="true">
+                  <video ref={screenVideoRef} autoPlay muted playsInline />
+                </div>
+                <div className="recognition-control-card__surface">
+                  <strong>{screenReady ? "屏幕已共享" : "等待共享屏幕"}</strong>
+                  <p>录屏和截帧都在这一步完成，左侧只负责展示结果。</p>
+                </div>
+                <div className="native-inline-actions native-inline-actions--triple">
+                  <button type="button" className="secondary" onClick={startScreen}>
+                    {screenReady ? "重新共享" : "共享屏幕"}
+                  </button>
+                  <button
+                    type="button"
+                    className="primary"
+                    onClick={() => {
+                      if (liveRecognitionEnabled) {
+                        stopLiveRecognitionLoop({ keepStatus: false });
+                        return;
+                      }
+                      startLiveRecognitionLoop({ autoOpenPictureInPicture: true });
+                    }}
+                    disabled={!screenReady || (!isAuthenticated && !liveRecognitionEnabled)}
+                  >
+                    {liveRecognitionEnabled ? "停止实时识别" : liveRecognitionBusy ? "启动中..." : "开启实时识别"}
+                  </button>
+                  <button type="button" className="primary" onClick={() => captureFromVideo("screen")} disabled={!screenReady}>
+                    截取当前画面
+                  </button>
+                </div>
+                <div className="native-inline-actions">
+                  <button
+                    type="button"
+                    className={screenRecording ? "primary" : "secondary"}
+                    onClick={() => {
+                      if (screenRecording) {
+                        stopScreenRecording();
+                        return;
+                      }
+                      startScreenRecording();
+                    }}
+                    disabled={!screenReady}
+                  >
+                    {screenRecording ? "停止录屏" : "开始录屏"}
+                  </button>
+                  {screenRecordingDownload ? (
+                    <a className="native-link" href={screenRecordingDownload.url} download={screenRecordingDownload.name}>
+                      下载录屏文件
+                    </a>
+                  ) : null}
+                </div>
+              </>
+            ) : null}
+          </section>
+        ) : null}
+
+        {controlView === "run" ? (
+          <section className="recognition-control-card">
+            <div className="recognition-control-card__head">
+              <div>
+                <p className="workspace__section-label">Step 03</p>
+                <h4>执行与导出</h4>
+              </div>
+              <button type="button" className="secondary" onClick={() => setControlView("capture")}>
+                返回准备
+              </button>
+            </div>
+
+            {!hasFrameForManualRun && !hasRecognitionResult ? (
+              <div className="recognition-control-card__surface">
+                <strong>{sourceMode === "upload" ? "先选一张图片" : "先截取一帧画面"}</strong>
+                <p>{sourceMode === "upload" ? "图片准备好之后，再回来执行完整识别。" : "实时识别可以先开，但完整分析需要截取当前画面。"}</p>
+              </div>
+            ) : (
+              <>
+                <div className="native-inline-actions native-inline-actions--triple">
+                  <button
+                    type="button"
+                    className="primary"
+                    onClick={handlePredict}
+                    disabled={predicting || liveRecognitionEnabled || !selectedFile || !isAuthenticated}
+                  >
+                    {predicting ? "识别中..." : "开始识别"}
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={() => {
+                      if (result) {
+                        onOpenAnnotation?.();
+                      }
+                    }}
+                    disabled={!result}
+                  >
+                    送去标注
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={togglePictureInPictureWindow}
+                    disabled={!pictureInPictureSupported}
+                    title={pictureInPictureSupported ? "在独立悬浮窗中查看识别结果" : "当前浏览器不支持网页画中画结果窗"}
+                  >
+                    {pictureInPictureActive ? "关闭画中画" : "打开画中画"}
+                  </button>
+                </div>
+
+                <details className="recognition-advanced">
+                  <summary>高级设置</summary>
+                  {sourceMode === "camera" || sourceMode === "screen" ? (
+                    <div className="recognition-advanced__grid">
+                      <label className="native-field">
+                        <span>实时采样模式</span>
+                        <select value={realtimeProfileId} onChange={(event) => setRealtimeProfileId(event.target.value)}>
+                          {REALTIME_PROFILE_OPTIONS.map((item) => (
+                            <option key={item.id} value={item.id}>
+                              {item.label} · {item.description}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="native-field">
+                        <span>目标实时速度 {formatFps(realtimeTargetFps)}</span>
+                        <input
+                          type="range"
+                          min="1"
+                          max="60"
+                          step="0.5"
+                          value={realtimeTargetFps}
+                          onChange={(event) => setRealtimeTargetFps(Number(event.target.value))}
+                        />
+                      </label>
+                      <div className="native-inline-actions">
+                        <span className="native-pill native-pill--accent">目标 {formatFps(realtimeTargetFps)}</span>
+                        <span className="native-pill native-pill--warm">实际 {formatFps(realtimeMetrics.actualFps)}</span>
+                        <span className="native-pill native-pill--neutral">最近 {formatDurationMs(realtimeMetrics.lastRoundtripMs)}</span>
+                        <span className="native-pill native-pill--neutral">推理 {formatDurationMs(result?.prediction_ms ?? realtimeMetrics.lastServerPredictionMs)}</span>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  <label className="native-field">
+                    <span>推理置信度阈值 {threshold}%</span>
+                    <input type="range" min="0" max="100" value={threshold} onChange={(event) => setThreshold(Number(event.target.value))} />
+                  </label>
+                </details>
+              </>
+            )}
+          </section>
+        ) : null}
 
         <div className="native-feedback">
           <p>{status}</p>
@@ -2068,12 +2185,11 @@ export function RecognitionWorkspace({
         </div>
       </div>
 
-      <div className="native-workspace__panel native-workspace__panel--canvas">
-        <div className="native-workspace__section-head">
-          <p className="workspace__section-label">Preview</p>
-          <h3>识别结果</h3>
-          <p>当前预览支持检测框与热力图双视图，可直接导出标框图和热力图，不再依赖旧工作台。</p>
-        </div>
+        <div className="native-workspace__panel native-workspace__panel--canvas">
+          <div className="native-workspace__section-head">
+            <p className="workspace__section-label">Preview</p>
+            <h3>识别结果</h3>
+          </div>
 
         <div className="recognition-stage__toolbar">
           <div className="recognition-stage__modes" role="tablist" aria-label="识别结果视图">
@@ -2102,7 +2218,7 @@ export function RecognitionWorkspace({
           </div>
         </div>
 
-        <div className={`recognition-stage${visualizationMode === "heatmap" ? " is-heatmap" : ""}`}>
+        <div className={`recognition-stage${visualizationMode === "heatmap" ? " is-heatmap" : ""}${!previewUrl ? " recognition-stage--empty" : ""}`}>
           {previewUrl ? (
             <div className="recognition-stage__media">
               <img
@@ -2147,178 +2263,205 @@ export function RecognitionWorkspace({
           )}
         </div>
 
-        <div className="recognition-result-grid">
-          <article className="recognition-result-card recognition-result-card--hero">
-            <span>主预测</span>
-            <strong>{primaryPrediction?.translatedLabel || "--"}</strong>
-            <p>{primaryPrediction ? `模型标签 ${primaryPrediction.rawLabel}` : "完成识别后显示主预测"}</p>
-          </article>
-          <article className="recognition-result-card">
-            <span>主置信度</span>
-            <strong>{formatConfidence(primaryPrediction?.confidence)}</strong>
-            <p>基于当前主预测输出</p>
-          </article>
-          <article className="recognition-result-card">
-            <span>检测框数量</span>
-            <strong>{filteredDetections.length}</strong>
-            <p>按当前阈值过滤后展示</p>
-          </article>
-          <article className="recognition-result-card">
-            <span>当前模型</span>
-            <strong>{result?.model_name || selectedModel || "--"}</strong>
-            <p>结果文件 {resultFilename}</p>
-          </article>
-          <article className="recognition-result-card">
-            <span>服务端推理</span>
-            <strong>{formatDurationMs(result?.prediction_ms)}</strong>
-            <p>{result?.ai_advice_included === false ? "当前为轻量实时模式" : "完整识别会额外生成 AI 分析"}</p>
-          </article>
-        </div>
-
-        <div className="recognition-dual-grid">
-          <section className="asset-collection recognition-collection">
-            <div className="asset-collection__head">
-              <div>
-                <p className="workspace__section-label">Candidates</p>
-                <h3>候选结果</h3>
-              </div>
-              <span className="native-pill native-pill--accent">{visibleTopPredictions.length} 个可见候选</span>
+        {hasRecognitionResult ? (
+          <>
+            <div className="recognition-result-grid">
+              <article className="recognition-result-card recognition-result-card--hero">
+                <span>主预测</span>
+                <strong>{primaryPrediction?.translatedLabel || "--"}</strong>
+                <p>{primaryPrediction ? `模型标签 ${primaryPrediction.rawLabel}` : "完成识别后显示主预测"}</p>
+              </article>
+              <article className="recognition-result-card">
+                <span>主置信度</span>
+                <strong>{formatConfidence(primaryPrediction?.confidence)}</strong>
+                <p>基于当前主预测输出</p>
+              </article>
+              <article className="recognition-result-card">
+                <span>检测框数量</span>
+                <strong>{filteredDetections.length}</strong>
+                <p>按当前阈值过滤后展示</p>
+              </article>
+              <article className="recognition-result-card">
+                <span>当前模型</span>
+                <strong>{result?.model_name || selectedModel || "--"}</strong>
+                <p>结果文件 {resultFilename}</p>
+              </article>
+              <article className="recognition-result-card">
+                <span>服务端推理</span>
+                <strong>{formatDurationMs(result?.prediction_ms)}</strong>
+                <p>{result?.ai_advice_included === false ? "当前为轻量实时模式" : "完整识别会额外生成 AI 分析"}</p>
+              </article>
             </div>
-            {!result ? (
-              <div className="native-empty native-empty--compact">
-                <p>识别完成后，这里会列出候选类别与置信度。</p>
-              </div>
-            ) : !visibleTopPredictions.length ? (
-              <div className="native-empty native-empty--compact">
-                <p>当前阈值下暂无可展示候选结果，可尝试降低阈值查看。</p>
-              </div>
-            ) : (
-              <ul className="native-list native-list--stacked">
-                {visibleTopPredictions.map((item, index) => (
-                  <li key={`${item.label}-${index}`} className="native-list__item native-list__item--stacked recognition-list__item">
-                    <strong>{translateLabel(item.label)}</strong>
-                    <span>{formatConfidence(item.confidence)}</span>
-                    <p>模型标签 {item.label}</p>
-                  </li>
+
+            <section ref={detailSectionRef} className="recognition-detail-shell">
+              <div className="recognition-detail-nav" role="tablist" aria-label="识别详情跳转">
+                {detailTabs.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={detailView === item.id}
+                    className={`recognition-detail-nav__item${detailView === item.id ? " is-active" : ""}`}
+                    onClick={() => handleDetailViewChange(item.id)}
+                  >
+                    <span>{item.label}</span>
+                    <strong>{item.summary}</strong>
+                  </button>
                 ))}
-              </ul>
-            )}
-          </section>
-
-          <section className="asset-collection recognition-collection">
-            <div className="asset-collection__head">
-              <div>
-                <p className="workspace__section-label">Statistics</p>
-                <h3>标签统计</h3>
               </div>
-              <span className={`native-pill ${statisticsSession.active ? "native-pill--warm" : "native-pill--neutral"}`}>
-                {statisticsSession.active ? "实时累计中" : "当前结果"}
-              </span>
-            </div>
-            {!labelStatistics.length ? (
-              <div className="native-empty native-empty--compact">
-                <p>{getStatisticsEmptyMessage(statisticsSession, labelStatisticsSource, threshold)}</p>
-              </div>
-            ) : (
-              <ul className="native-list native-list--stacked">
-                {labelStatistics.map((item) => (
-                  <li key={item.label} className="native-list__item native-list__item--stacked recognition-list__item">
-                    <strong>{item.translatedLabel}</strong>
-                    <span>{item.count} 个目标</span>
-                    <p>
-                      最高 {formatConfidence(item.maxConfidence)} · 平均 {formatConfidence(item.averageConfidence)}
-                    </p>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
-        </div>
 
-        <div className="recognition-list">
-          <div className="native-workspace__section-head">
-            <p className="workspace__section-label">Detections</p>
-            <h3>检测明细</h3>
-          </div>
-          {!filteredDetections.length ? (
-            <div className="native-empty native-empty--compact">
-              <p>识别完成后，这里会列出当前阈值下的检测结果。</p>
-            </div>
-          ) : (
-            <ul className="native-list native-list--stacked">
-              {filteredDetections.map((item, index) => (
-                <li key={`${item.label}-${index}`} className="native-list__item native-list__item--stacked recognition-list__item">
-                  <strong>{translateLabel(item.label)}</strong>
-                  <span>{formatConfidence(item.confidence)}</span>
-                  <p>
-                    模型标签 {item.label}
-                    {Array.isArray(item.bbox) && item.bbox.length === 4 ? ` · 关注面积 ${formatPercent(getAreaSharePercent(item, previewMeta))}` : ""}
-                  </p>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-
-        <div className="recognition-attention">
-          <div className="native-workspace__section-head">
-            <p className="workspace__section-label">Attention</p>
-            <h3>关注度快照</h3>
-            <p>根据当前检测结果估算模型关注区域，把高价值目标压缩成两张原生分析卡。</p>
-          </div>
-          <div className="recognition-attention__grid">
-            {attentionItems.map((item) => (
-              <article
-                key={item.id}
-                className={`recognition-attention__card${item.isPlaceholder ? " is-placeholder" : ""}`}
-              >
-                <div className="recognition-attention__top">
-                  <span>{item.rankLabel}</span>
-                  <strong>{item.confidenceText}</strong>
-                </div>
-                <div className="recognition-attention__title">
-                  <h4>{item.title}</h4>
-                  <p>{item.english}</p>
-                </div>
-                <div className="recognition-attention__track">
-                  <span style={{ width: item.confidenceWidth }} />
-                </div>
-                <p className="recognition-attention__foot">{item.footnote}</p>
-                <div className="recognition-attention__layers">
-                  {item.layers.map((layer) => (
-                    <div key={`${item.id}-${layer.title}`} className="recognition-attention__layer">
-                      <div className="recognition-attention__layer-head">
-                        <span>{layer.title} · {layer.name}</span>
-                        <strong>{layer.scoreText}</strong>
-                      </div>
-                      <div className="recognition-attention__layer-track">
-                        <span style={{ width: layer.scoreWidth }} />
-                      </div>
+              <div className="recognition-dual-grid">
+                <section className="asset-collection recognition-collection">
+                  <div className="asset-collection__head">
+                    <div>
+                      <p className="workspace__section-label">Candidates</p>
+                      <h3>候选结果</h3>
                     </div>
+                    <span className="native-pill native-pill--accent">{visibleTopPredictions.length} 个可见候选</span>
+                  </div>
+                  {!result ? (
+                    <div className="native-empty native-empty--compact">
+                      <p>识别完成后，这里会列出候选类别与置信度。</p>
+                    </div>
+                  ) : !visibleTopPredictions.length ? (
+                    <div className="native-empty native-empty--compact">
+                      <p>当前阈值下暂无可展示候选结果，可尝试降低阈值查看。</p>
+                    </div>
+                  ) : (
+                    <ul className="native-list native-list--stacked">
+                      {visibleTopPredictions.map((item, index) => (
+                        <li key={`${item.label}-${index}`} className="native-list__item native-list__item--stacked recognition-list__item">
+                          <strong>{translateLabel(item.label)}</strong>
+                          <span>{formatConfidence(item.confidence)}</span>
+                          <p>模型标签 {item.label}</p>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </section>
+
+                <section className="asset-collection recognition-collection">
+                  <div className="asset-collection__head">
+                    <div>
+                      <p className="workspace__section-label">Statistics</p>
+                      <h3>标签统计</h3>
+                    </div>
+                    <span className={`native-pill ${statisticsSession.active ? "native-pill--warm" : "native-pill--neutral"}`}>
+                      {statisticsSession.active ? "实时累计中" : "当前结果"}
+                    </span>
+                  </div>
+                  {!labelStatistics.length ? (
+                    <div className="native-empty native-empty--compact">
+                      <p>{getStatisticsEmptyMessage(statisticsSession, labelStatisticsSource, threshold)}</p>
+                    </div>
+                  ) : (
+                    <ul className="native-list native-list--stacked">
+                      {labelStatistics.map((item) => (
+                        <li key={item.label} className="native-list__item native-list__item--stacked recognition-list__item">
+                          <strong>{item.translatedLabel}</strong>
+                          <span>{item.count} 个目标</span>
+                          <p>
+                            最高 {formatConfidence(item.maxConfidence)} · 平均 {formatConfidence(item.averageConfidence)}
+                          </p>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </section>
+              </div>
+
+              <div className="recognition-list">
+                <div className="native-workspace__section-head">
+                  <p className="workspace__section-label">Detections</p>
+                  <h3>检测明细</h3>
+                </div>
+                {!filteredDetections.length ? (
+                  <div className="native-empty native-empty--compact">
+                    <p>识别完成后，这里会列出当前阈值下的检测结果。</p>
+                  </div>
+                ) : (
+                  <ul className="native-list native-list--stacked">
+                    {filteredDetections.map((item, index) => (
+                      <li key={`${item.label}-${index}`} className="native-list__item native-list__item--stacked recognition-list__item">
+                        <strong>{translateLabel(item.label)}</strong>
+                        <span>{formatConfidence(item.confidence)}</span>
+                        <p>
+                          模型标签 {item.label}
+                          {Array.isArray(item.bbox) && item.bbox.length === 4 ? ` · 关注面积 ${formatPercent(getAreaSharePercent(item, previewMeta))}` : ""}
+                        </p>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+
+              <div className="recognition-attention">
+                <div className="native-workspace__section-head">
+                  <p className="workspace__section-label">Attention</p>
+                  <h3>关注度快照</h3>
+                </div>
+                <div className="recognition-attention__grid">
+                  {attentionItems.map((item) => (
+                    <article
+                      key={item.id}
+                      className={`recognition-attention__card${item.isPlaceholder ? " is-placeholder" : ""}`}
+                    >
+                      <div className="recognition-attention__top">
+                        <span>{item.rankLabel}</span>
+                        <strong>{item.confidenceText}</strong>
+                      </div>
+                      <div className="recognition-attention__title">
+                        <h4>{item.title}</h4>
+                        <p>{item.english}</p>
+                      </div>
+                      <div className="recognition-attention__track">
+                        <span style={{ width: item.confidenceWidth }} />
+                      </div>
+                      <p className="recognition-attention__foot">{item.footnote}</p>
+                      <div className="recognition-attention__layers">
+                        {item.layers.map((layer) => (
+                          <div key={`${item.id}-${layer.title}`} className="recognition-attention__layer">
+                            <div className="recognition-attention__layer-head">
+                              <span>{layer.title} · {layer.name}</span>
+                              <strong>{layer.scoreText}</strong>
+                            </div>
+                            <div className="recognition-attention__layer-track">
+                              <span style={{ width: layer.scoreWidth }} />
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </article>
                   ))}
                 </div>
-              </article>
-            ))}
-          </div>
-        </div>
+              </div>
 
-        {adviceBundle ? (
-          <div className="recognition-advice">
-            <div className="native-workspace__section-head">
-              <p className="workspace__section-label">Analysis</p>
-              <h3>智能分析</h3>
-            </div>
-            <p className="recognition-advice__meta">分析来源：{formatAdviceSource(adviceBundle.source)}</p>
-            {adviceBundle.detail ? <p className="recognition-advice__meta">{adviceBundle.detail}</p> : null}
-            <p>{adviceBundle.summary}</p>
-            <ul className="native-list native-list--stacked">
-              {(adviceBundle.advice || []).map((item) => (
-                <li key={item} className="native-list__item native-list__item--stacked">
-                  <span>{item}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
+              <div className="recognition-advice">
+                <div className="native-workspace__section-head">
+                  <p className="workspace__section-label">Analysis</p>
+                  <h3>智能分析</h3>
+                </div>
+                {adviceBundle ? (
+                  <>
+                    <p className="recognition-advice__meta">分析来源：{formatAdviceSource(adviceBundle.source)}</p>
+                    {adviceBundle.detail ? <p className="recognition-advice__meta">{adviceBundle.detail}</p> : null}
+                    <p>{adviceBundle.summary}</p>
+                    <ul className="native-list native-list--stacked">
+                      {(adviceBundle.advice || []).map((item) => (
+                        <li key={item} className="native-list__item native-list__item--stacked">
+                          <span>{item}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                ) : (
+                  <div className="native-empty native-empty--compact">
+                    <p>完成识别后，这里会生成病害分析与处理建议。</p>
+                  </div>
+                )}
+              </div>
+            </section>
+          </>
         ) : null}
       </div>
 

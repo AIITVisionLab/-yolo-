@@ -23,6 +23,7 @@ ALLOW_INSECURE_DEFAULT_USERS = str(os.getenv("ALLOW_INSECURE_DEFAULT_USERS", "")
     "on",
 }
 PASSWORD_ITERATIONS = 120_000
+SESSION_TOKEN_PREFIX = "sha256"
 
 
 def _utc_now() -> datetime:
@@ -194,6 +195,13 @@ class AuthStore:
         )
         return hmac.compare_digest(candidate, expected)
 
+    def _hash_session_token(self, token: str) -> str:
+        safe_token = str(token or "").strip()
+        if not safe_token:
+            return ""
+        digest = hashlib.sha256(safe_token.encode("utf-8")).hexdigest()
+        return f"{SESSION_TOKEN_PREFIX}${digest}"
+
     def _row_to_user(self, row: sqlite3.Row) -> Dict[str, object]:
         return {
             "id": int(row["id"]),
@@ -290,6 +298,7 @@ class AuthStore:
 
     def create_session(self, user_id: int) -> str:
         token = secrets.token_urlsafe(32)
+        token_hash = self._hash_session_token(token)
         created_at = _utc_now()
         expires_at = created_at + timedelta(hours=self.session_hours)
         with self._connect() as conn:
@@ -298,13 +307,15 @@ class AuthStore:
                 INSERT INTO sessions (token, user_id, created_at, expires_at)
                 VALUES (?, ?, ?, ?)
                 """,
-                (token, int(user_id), created_at.isoformat(timespec="seconds"), expires_at.isoformat(timespec="seconds")),
+                (token_hash, int(user_id), created_at.isoformat(timespec="seconds"), expires_at.isoformat(timespec="seconds")),
             )
         return token
 
     def delete_session(self, token: str) -> None:
+        safe_token = str(token or "").strip()
+        token_hash = self._hash_session_token(safe_token)
         with self._connect() as conn:
-            conn.execute("DELETE FROM sessions WHERE token = ?", (str(token or ""),))
+            conn.execute("DELETE FROM sessions WHERE token IN (?, ?)", (safe_token, token_hash))
 
     def delete_sessions_for_user(self, user_id: int) -> None:
         with self._connect() as conn:
@@ -314,6 +325,7 @@ class AuthStore:
         safe_token = str(token or "").strip()
         if not safe_token:
             return None
+        token_hash = self._hash_session_token(safe_token)
 
         with self._connect() as conn:
             row = conn.execute(
@@ -326,12 +338,13 @@ class AuthStore:
                     users.is_disabled,
                     users.is_flagged,
                     users.created_at,
+                    sessions.token AS session_token,
                     sessions.expires_at
                 FROM sessions
                 JOIN users ON users.id = sessions.user_id
-                WHERE sessions.token = ?
+                WHERE sessions.token IN (?, ?)
                 """,
-                (safe_token,),
+                (safe_token, token_hash),
             ).fetchone()
 
             if not row:
@@ -340,16 +353,19 @@ class AuthStore:
             try:
                 expires_at = datetime.fromisoformat(str(row["expires_at"]))
             except ValueError:
-                conn.execute("DELETE FROM sessions WHERE token = ?", (safe_token,))
+                conn.execute("DELETE FROM sessions WHERE token = ?", (str(row["session_token"]),))
                 return None
 
             if expires_at <= _utc_now():
-                conn.execute("DELETE FROM sessions WHERE token = ?", (safe_token,))
+                conn.execute("DELETE FROM sessions WHERE token = ?", (str(row["session_token"]),))
                 return None
 
             if bool(row["is_disabled"]):
                 conn.execute("DELETE FROM sessions WHERE user_id = ?", (int(row["id"]),))
                 return None
+
+            if str(row["session_token"]) == safe_token:
+                conn.execute("UPDATE sessions SET token = ? WHERE token = ?", (token_hash, safe_token))
 
         return self._row_to_user(row)
 

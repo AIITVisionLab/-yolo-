@@ -29,8 +29,11 @@ test('ui core flows', async ({ page }) => {
 
   await page.goto('http://127.0.0.1:5500/?workspace=admin', { waitUntil: 'networkidle' });
   await expect(page.locator('.native-workspace--admin')).toBeVisible();
-  await expect(page.getByRole('heading', { name: '平台用户', exact: true })).toBeVisible();
-  await expect(page.getByRole('heading', { name: '模型资源', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '模型资源', exact: true }).first()).toBeVisible();
+  await page.locator('.workspace-mode-switch__item', { hasText: '平台用户' }).first().click();
+  await expect(page.getByRole('heading', { name: '平台用户', exact: true }).first()).toBeVisible();
+  await page.locator('.workspace-mode-switch__item', { hasText: '增强脚本' }).first().click();
+  await expect(page.getByRole('heading', { name: '增强算法上架台', exact: true }).first()).toBeVisible();
 });
 
 test('annotation can draw boxes from accessible dataset records', async ({ page }) => {

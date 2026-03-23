@@ -13,6 +13,8 @@ export function WorkspaceNav({
     <nav className={`workspace-nav workspace-nav--${layout}`} aria-label="工作区导航">
       {visibleWorkspaces.map((workspace, index) => {
         const active = workspace.id === activeWorkspace;
+        const showMeta = layout !== "topbar";
+        const showDetail = layout !== "rail";
         return (
           <button
             key={workspace.id}
@@ -24,9 +26,9 @@ export function WorkspaceNav({
               {workspace.navGlyph || workspace.step || String(index + 1).padStart(2, "0")}
             </span>
             <span className="workspace-nav__content">
-              {layout !== "sidebar" && workspace.groupLabel ? <em>{workspace.groupLabel}</em> : null}
+              {showMeta && showDetail && layout !== "sidebar" && workspace.groupLabel ? <em>{workspace.groupLabel}</em> : null}
               <strong>{workspace.label}</strong>
-              <small>{workspace.hint}</small>
+              {showMeta && showDetail ? <small>{workspace.hint}</small> : null}
             </span>
           </button>
         );

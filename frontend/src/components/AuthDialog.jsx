@@ -36,14 +36,14 @@ export function AuthDialog({ open, mode, loading = false, error = "", onClose, o
       <div className="auth-dialog__backdrop" onClick={onClose} />
       <div className="auth-dialog__panel">
         <div className="auth-dialog__hero">
-          <BrandMark />
-          <h2>进入植物病害智能工作台</h2>
-          <p>登录后会直接进入当前工作区，识别、标注、训练和管理都在这一个站点里完成。</p>
-          <ul className="auth-dialog__list">
-            <li>登录后会自动恢复到你当前选中的工作区。</li>
-            <li>识别结果可以继续流转到标注与训练模块。</li>
-            <li>管理员账号登录后会看到模型和数据集管理入口。</li>
-          </ul>
+          <div className="auth-dialog__hero-top">
+            <BrandMark />
+            <span className="auth-dialog__hero-badge">Encrypted Session</span>
+          </div>
+          <div className="auth-dialog__hero-copy">
+            <h2>进入工作台</h2>
+            <p>登录后直接回到当前模块，浏览器只保存加密后的会话凭证。</p>
+          </div>
         </div>
         <div className="auth-dialog__form-wrap">
           <div className="auth-tabs" role="tablist" aria-label="登录注册切换">
@@ -95,6 +95,7 @@ export function AuthDialog({ open, mode, loading = false, error = "", onClose, o
                 关闭
               </button>
             </div>
+            <p className="auth-form__privacy">浏览器端仅保存加密后的会话凭证，密码不会被前端缓存。</p>
           </form>
         </div>
       </div>

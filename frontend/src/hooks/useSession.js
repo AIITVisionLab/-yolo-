@@ -10,12 +10,37 @@ const initialState = {
 };
 
 export function useSession() {
-  const [state, setState] = useState(() => ({
-    ...initialState,
-    token: typeof window !== "undefined" ? readStoredToken() : "",
-  }));
+  const [state, setState] = useState(initialState);
+  const [storageReady, setStorageReady] = useState(typeof window === "undefined");
 
   useEffect(() => {
+    let active = true;
+    async function restoreFromStorage() {
+      const storedToken = typeof window !== "undefined" ? await readStoredToken() : "";
+      if (!active) {
+        return;
+      }
+
+      setStorageReady(true);
+      setState({
+        status: storedToken ? "booting" : "anonymous",
+        user: null,
+        token: storedToken,
+        error: "",
+      });
+    }
+
+    restoreFromStorage();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!storageReady || state.status !== "booting") {
+      return;
+    }
+
     const controller = new AbortController();
     const token = state.token;
 
@@ -28,6 +53,10 @@ export function useSession() {
       setState((current) => ({ ...current, status: "booting", error: "" }));
       try {
         const payload = await fetchSession(token, controller.signal);
+        await writeStoredToken(token);
+        if (controller.signal.aborted) {
+          return;
+        }
         setState({
           status: "authenticated",
           user: payload?.data?.user || null,
@@ -38,7 +67,7 @@ export function useSession() {
         if (controller.signal.aborted || error?.name === "AbortError") {
           return;
         }
-        writeStoredToken("");
+        await writeStoredToken("");
         setState({
           status: "anonymous",
           user: null,
@@ -50,10 +79,11 @@ export function useSession() {
 
     hydrate();
     return () => controller.abort();
-  }, [state.token]);
+  }, [state.status, state.token, storageReady]);
 
   useEffect(() => {
-    async function syncTokenFromStorage(nextToken) {
+    async function syncTokenFromStorage() {
+      const nextToken = await readStoredToken();
       if (!nextToken) {
         setState({
           status: "anonymous",
@@ -71,21 +101,17 @@ export function useSession() {
       if (event.key !== AUTH_STORAGE_KEY) {
         return;
       }
-      const nextToken = event.newValue || "";
-      if (nextToken === state.token) {
-        return;
-      }
-      syncTokenFromStorage(nextToken);
+      syncTokenFromStorage();
     }
 
     window.addEventListener("storage", handleStorage);
     return () => window.removeEventListener("storage", handleStorage);
-  }, [state.token]);
+  }, []);
 
   async function completeAuth(payload) {
     const nextToken = payload?.data?.token || "";
     const nextUser = payload?.data?.user || null;
-    writeStoredToken(nextToken);
+    await writeStoredToken(nextToken);
     setState({
       status: "authenticated",
       user: nextUser,
@@ -126,7 +152,7 @@ export function useSession() {
     } catch {
       // 退出登录时优先清理本地会话。
     } finally {
-      writeStoredToken("");
+      await writeStoredToken("");
       setState({
         status: "anonymous",
         user: null,
