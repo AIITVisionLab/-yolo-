@@ -6,12 +6,16 @@ import {
   createAnnotationDataset,
   deleteAnnotationClass,
   deleteAnnotationDataset,
+  downloadAnnotationSourceImage,
   downloadAnnotationDataset,
   fetchAnnotationClasses,
   fetchModels,
+  fetchAnnotationSourceImageDetail,
+  importAnnotationDatasetFolder,
   fetchTrainingTask,
   saveAnnotationFile,
   startTrainingTask,
+  uploadAnnotationSourceImages,
 } from "@/lib/plantApi";
 import { saveBlobAsFile } from "@/lib/download";
 import { validateImageFile } from "@/lib/imageFiles";
@@ -112,16 +116,8 @@ function getDatasetOwnerLabel(datasetMeta) {
   return datasetMeta.owner_display_name || datasetMeta.owner_username || (datasetMeta.is_official ? "官方资源" : "当前用户");
 }
 
-export function AnnotationWorkspace({
-  token,
-  isAuthenticated,
-  recognitionPayload = null,
-}) {
-  const imageInputRef = useRef(null);
-  const frameRef = useRef(null);
-  const activeTaskRef = useRef("");
-
-  const [datasetState, setDatasetState] = useState({
+function createInitialDatasetState() {
+  return {
     loading: false,
     datasetItems: [],
     selectedDataset: "",
@@ -130,9 +126,26 @@ export function AnnotationWorkspace({
     selectedTemplateKey: "",
     classAdvices: [],
     datasetMeta: null,
-    counts: { source: 0, train: 0, val: 0 },
+    sourceImages: [],
+    counts: { source: 0, annotated: 0, train: 0, val: 0 },
     hint: "",
-  });
+  };
+}
+
+export function AnnotationWorkspace({
+  token,
+  isAuthenticated,
+  recognitionPayload = null,
+}) {
+  const imageInputRef = useRef(null);
+  const sourceFolderInputRef = useRef(null);
+  const datasetFolderImportInputRef = useRef(null);
+  const frameRef = useRef(null);
+  const activeTaskRef = useRef("");
+  const previousDatasetRef = useRef("");
+  const pendingBoxSelectionRef = useRef("");
+
+  const [datasetState, setDatasetState] = useState(() => createInitialDatasetState());
   const [models, setModels] = useState([]);
   const [selectedClass, setSelectedClass] = useState("");
   const [imageFile, setImageFile] = useState(null);
@@ -141,15 +154,24 @@ export function AnnotationWorkspace({
   const [boxes, setBoxes] = useState([]);
   const [draftBox, setDraftBox] = useState(null);
   const [selectedIndex, setSelectedIndex] = useState(-1);
+  const [selectedSourceImageName, setSelectedSourceImageName] = useState("");
   const [status, setStatus] = useState("登录后即可在这里管理数据集、框选标注并发起训练任务。");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [uploadingSourceImages, setUploadingSourceImages] = useState(false);
+  const [loadingSourceImageName, setLoadingSourceImageName] = useState("");
+  const [importingDatasetFolder, setImportingDatasetFolder] = useState(false);
   const [augmenting, setAugmenting] = useState(false);
   const [training, setTraining] = useState(false);
   const [datasetCreateName, setDatasetCreateName] = useState("");
   const [datasetPublic, setDatasetPublic] = useState(false);
   const [datasetCreateMode, setDatasetCreateMode] = useState("template");
   const [datasetTemplateKey, setDatasetTemplateKey] = useState("blank");
+  const [datasetImportName, setDatasetImportName] = useState("");
+  const [datasetImportPublic, setDatasetImportPublic] = useState(false);
+  const [datasetImportFiles, setDatasetImportFiles] = useState([]);
+  const [datasetImportRelativePaths, setDatasetImportRelativePaths] = useState([]);
+  const [datasetImportFolderLabel, setDatasetImportFolderLabel] = useState("");
   const [customClass, setCustomClass] = useState("");
   const [augmentCopies, setAugmentCopies] = useState(2);
   const [focusMode, setFocusMode] = useState(false);
@@ -168,10 +190,50 @@ export function AnnotationWorkspace({
   }, [imageUrl]);
 
   useEffect(() => {
+    const previousDataset = previousDatasetRef.current;
+    const currentDataset = datasetState.selectedDataset;
+    const datasetChanged = previousDataset && previousDataset !== currentDataset;
+
+    if (datasetChanged) {
+      setBoxes([]);
+      setDraftBox(null);
+      setSelectedIndex(-1);
+      if (selectedSourceImageName) {
+        revokeUrl(imageUrl);
+        setImageFile(null);
+        setImageUrl("");
+        setImageMeta({ width: 0, height: 0 });
+        setSelectedSourceImageName("");
+      }
+    }
+
+    if (!currentDataset && imageUrl) {
+      revokeUrl(imageUrl);
+      setImageFile(null);
+      setImageUrl("");
+      setImageMeta({ width: 0, height: 0 });
+      setFocusMode(false);
+    }
+
+    previousDatasetRef.current = currentDataset;
+  }, [datasetState.selectedDataset, imageUrl, selectedSourceImageName]);
+
+  useEffect(() => {
     if (!imageUrl) {
       setFocusMode(false);
     }
   }, [imageUrl]);
+
+  useEffect(() => {
+    if (pendingBoxSelectionRef.current === "last") {
+      pendingBoxSelectionRef.current = "";
+      setSelectedIndex(boxes.length ? boxes.length - 1 : -1);
+      return;
+    }
+    if (selectedIndex >= boxes.length) {
+      setSelectedIndex(boxes.length ? boxes.length - 1 : -1);
+    }
+  }, [boxes.length, selectedIndex]);
 
   useEffect(() => {
     if (!focusMode) {
@@ -195,17 +257,22 @@ export function AnnotationWorkspace({
 
   useEffect(() => {
     if (!isAuthenticated || !token) {
-      setDatasetState((current) => ({
-        ...current,
-        datasetItems: [],
-        selectedDataset: "",
-        classes: [],
-        classTemplates: [],
-        selectedTemplateKey: "",
-        classAdvices: [],
-        datasetMeta: null,
-      }));
+      revokeUrl(imageUrl);
+      setDatasetState(createInitialDatasetState());
       setModels([]);
+      setSelectedClass("");
+      setImageFile(null);
+      setImageUrl("");
+      setImageMeta({ width: 0, height: 0 });
+      setBoxes([]);
+      setDraftBox(null);
+      setSelectedIndex(-1);
+      setSelectedSourceImageName("");
+      setDatasetImportFiles([]);
+      setDatasetImportRelativePaths([]);
+      setDatasetImportFolderLabel("");
+      setTrainTask(null);
+      activeTaskRef.current = "";
       return;
     }
 
@@ -251,6 +318,7 @@ export function AnnotationWorkspace({
     const classes = Array.isArray(data.classes) ? data.classes : [];
     const classTemplates = Array.isArray(data.class_templates) ? data.class_templates : [];
     const classAdvices = Array.isArray(data.class_advices) ? data.class_advices : [];
+    const sourceImages = Array.isArray(data.source_images) ? data.source_images : [];
     const datasetMeta = selectedDataset ? getDatasetMeta(datasetItems, selectedDataset, data) : null;
     const selectedTemplateKey = data.selected_dataset_template_key || "";
     setDatasetState({
@@ -262,13 +330,15 @@ export function AnnotationWorkspace({
       selectedTemplateKey,
       classAdvices,
       datasetMeta,
+      sourceImages,
       counts: {
-        source: Number(data.source_pair_count) || 0,
+        source: Number(data.source_image_count) || 0,
+        annotated: Number(data.annotated_source_count ?? data.source_pair_count) || 0,
         train: Number(data.train_pair_count) || 0,
         val: Number(data.val_pair_count) || 0,
       },
       hint: selectedDataset
-        ? `数据集 ${selectedDataset} ｜ 原始样本 ${Number(data.source_pair_count) || 0} ｜ train ${Number(data.train_pair_count) || 0} ｜ val ${Number(data.val_pair_count) || 0}`
+        ? `数据集 ${selectedDataset} ｜ 原始图片 ${Number(data.source_image_count) || 0} ｜ 已标注 ${Number(data.annotated_source_count ?? data.source_pair_count) || 0} ｜ train ${Number(data.train_pair_count) || 0} ｜ val ${Number(data.val_pair_count) || 0}`
         : "当前没有可访问数据集。",
     });
     setDatasetTemplateKey((current) => {
@@ -301,10 +371,13 @@ export function AnnotationWorkspace({
     }
     setDatasetState((current) => ({ ...current, loading: true }));
     try {
+      setError("");
       const payload = await fetchAnnotationClasses(token, datasetName);
       applyAnnotationPayload(payload?.data || {});
     } catch (nextError) {
       setError(nextError.message || "标注数据加载失败。");
+    } finally {
+      setDatasetState((current) => ({ ...current, loading: false }));
     }
   }
 
@@ -345,13 +418,17 @@ export function AnnotationWorkspace({
     if (!window.confirm(`确定删除数据集“${datasetState.selectedDataset}”吗？`)) {
       return;
     }
+    const deletingDataset = datasetState.selectedDataset;
     try {
+      setDatasetState((current) => ({ ...current, loading: true }));
       setError("");
-      const payload = await deleteAnnotationDataset(token, datasetState.selectedDataset);
+      const payload = await deleteAnnotationDataset(token, deletingDataset);
       applyAnnotationPayload(payload?.data || {});
-      setStatus(`数据集 ${datasetState.selectedDataset} 已删除。`);
+      setStatus(payload?.message || `数据集 ${deletingDataset} 已删除。`);
     } catch (nextError) {
       setError(nextError.message || "数据集删除失败。");
+    } finally {
+      setDatasetState((current) => ({ ...current, loading: false }));
     }
   }
 
@@ -405,15 +482,15 @@ export function AnnotationWorkspace({
     }
   }
 
-  function setImageFromFile(file, nextStatus) {
+  function setImageFromFile(file, nextStatus, { nextBoxes = [], sourceImageName = "" } = {}) {
     revokeUrl(imageUrl);
     setImageFile(file);
     setImageUrl(URL.createObjectURL(file));
-    setBoxes([]);
+    setBoxes(nextBoxes);
     setDraftBox(null);
     setSelectedIndex(-1);
+    setSelectedSourceImageName(sourceImageName);
     setAnnotationView("annotate");
-    setFocusMode(true);
     setStatus(nextStatus);
     setError("");
   }
@@ -430,6 +507,142 @@ export function AnnotationWorkspace({
       return;
     }
     setImageFromFile(file, `已载入图片 ${file.name}，现在可以开始框选标注。`);
+    event.target.value = "";
+  }
+
+  async function handleSourceFolderUpload(event) {
+    const files = Array.from(event.target.files || []);
+    if (!files.length || !datasetState.selectedDataset) {
+      event.target.value = "";
+      return;
+    }
+
+    for (const file of files) {
+      const validationError = validateImageFile(file);
+      if (validationError) {
+        setError(`${file.name}：${validationError}`);
+        event.target.value = "";
+        return;
+      }
+    }
+
+    try {
+      setUploadingSourceImages(true);
+      setError("");
+      const payload = await uploadAnnotationSourceImages(token, {
+        datasetName: datasetState.selectedDataset,
+        files,
+      });
+      applyAnnotationPayload(payload?.data || {});
+      setStatus(payload?.message || `已导入 ${files.length} 张图片。`);
+      setAnnotationView("annotate");
+    } catch (nextError) {
+      setError(nextError.message || "批量导入原始图片失败。");
+    } finally {
+      setUploadingSourceImages(false);
+      event.target.value = "";
+    }
+  }
+
+  function openDatasetFolderImportPicker() {
+    datasetFolderImportInputRef.current?.click();
+  }
+
+  function handleDatasetFolderImportSelection(event) {
+    const files = Array.from(event.target.files || []);
+    if (!files.length) {
+      setDatasetImportFiles([]);
+      setDatasetImportRelativePaths([]);
+      setDatasetImportFolderLabel("");
+      return;
+    }
+
+    const relativePaths = files.map((file) => String(file.webkitRelativePath || file.name || "").replace(/\\/g, "/"));
+    const rootCandidate = relativePaths[0]?.split("/")[0] || "";
+    setDatasetImportFiles(files);
+    setDatasetImportRelativePaths(relativePaths);
+    setDatasetImportFolderLabel(rootCandidate || files[0]?.name || "已选目录");
+    if (!datasetImportName && rootCandidate) {
+      setDatasetImportName(rootCandidate);
+    }
+    setError("");
+    event.target.value = "";
+  }
+
+  async function handleDatasetFolderImport() {
+    if (!datasetImportFiles.length) {
+      setError("请先选择本地数据集文件夹。");
+      return;
+    }
+
+    try {
+      setImportingDatasetFolder(true);
+      setError("");
+      const payload = await importAnnotationDatasetFolder(token, {
+        datasetName: datasetImportName.trim(),
+        isPublic: datasetImportPublic,
+        files: datasetImportFiles,
+        relativePaths: datasetImportRelativePaths,
+      });
+      applyAnnotationPayload(payload?.data || {});
+      setDatasetImportFiles([]);
+      setDatasetImportRelativePaths([]);
+      setDatasetImportFolderLabel("");
+      setDatasetImportName("");
+      setDatasetImportPublic(false);
+      setStatus(payload?.message || "本地数据集已导入。");
+      setAnnotationView("dataset");
+    } catch (nextError) {
+      setError(nextError.message || "本地数据集导入失败。");
+    } finally {
+      setImportingDatasetFolder(false);
+    }
+  }
+
+  async function loadDatasetSourceImage(imageName) {
+    if (!token || !datasetState.selectedDataset || !imageName) {
+      return;
+    }
+
+    try {
+      setLoadingSourceImageName(imageName);
+      setError("");
+      const [detailPayload, blob] = await Promise.all([
+        fetchAnnotationSourceImageDetail(token, datasetState.selectedDataset, imageName),
+        downloadAnnotationSourceImage(token, datasetState.selectedDataset, imageName),
+      ]);
+      const detail = detailPayload?.data || {};
+      const file = new File([blob], detail.image_name || imageName, {
+        type: blob.type || "image/jpeg",
+      });
+      const nextBoxes = Array.isArray(detail.annotations) ? detail.annotations : [];
+      setImageFromFile(
+        file,
+        detail.has_annotation
+          ? `已载入 ${detail.image_name || imageName}，恢复 ${nextBoxes.length} 个标注框。`
+          : `已载入 ${detail.image_name || imageName}，可以开始标注。`,
+        {
+          nextBoxes,
+          sourceImageName: detail.image_name || imageName,
+        },
+      );
+    } catch (nextError) {
+      setError(nextError.message || "载入数据集图片失败。");
+    } finally {
+      setLoadingSourceImageName("");
+    }
+  }
+
+  function openSourceFolderPicker() {
+    sourceFolderInputRef.current?.click();
+  }
+
+  function handleLoadNextPendingSourceImage() {
+    if (!nextPendingSourceImage) {
+      setError("当前没有待标注的原始图片。");
+      return;
+    }
+    loadDatasetSourceImage(nextPendingSourceImage.name);
   }
 
   function handleUseRecognitionImage() {
@@ -459,8 +672,8 @@ export function AnnotationWorkspace({
       setError("当前识别结果和数据集类别没有交集，无法直接导入。");
       return;
     }
+    pendingBoxSelectionRef.current = "last";
     setBoxes((current) => current.concat(supported));
-    setSelectedIndex(supported.length ? boxes.length + supported.length - 1 : -1);
     setStatus(`已导入 ${supported.length} 个识别框，可继续人工修正。`);
   }
 
@@ -514,8 +727,8 @@ export function AnnotationWorkspace({
     if (normalized.x2 - normalized.x1 < 4 || normalized.y2 - normalized.y1 < 4) {
       return;
     }
+    pendingBoxSelectionRef.current = "last";
     setBoxes((current) => current.concat(normalized));
-    setSelectedIndex(boxes.length);
   }
 
   function handleDeleteSelectedBox() {
@@ -523,6 +736,13 @@ export function AnnotationWorkspace({
       return;
     }
     setBoxes((current) => current.filter((_, index) => index !== selectedIndex));
+    setSelectedIndex(-1);
+  }
+
+  function handleClearBoxes() {
+    pendingBoxSelectionRef.current = "";
+    setBoxes([]);
+    setDraftBox(null);
     setSelectedIndex(-1);
   }
 
@@ -535,9 +755,10 @@ export function AnnotationWorkspace({
       setSaving(true);
       setError("");
       const payload = await saveAnnotationFile(token, {
-        file: imageFile,
+        file: selectedSourceImageName ? null : imageFile,
         datasetName: datasetState.selectedDataset,
         annotations: boxes.map(toFixedBox),
+        sourceFilename: selectedSourceImageName || undefined,
       });
       setStatus(`保存成功：${payload?.data?.filename} 已写入数据集 ${payload?.data?.dataset_name}。`);
       await reloadAnnotationData(datasetState.selectedDataset);
@@ -640,6 +861,25 @@ export function AnnotationWorkspace({
 
   const draftStyle = useMemo(() => (draftBox ? boxStyle(normalizeBox(draftBox), imageMeta) : null), [draftBox, imageMeta]);
   const canWrite = Boolean(datasetState.datasetMeta?.can_write);
+  const currentSourceImageMeta = useMemo(
+    () => datasetState.sourceImages.find((item) => item.name === selectedSourceImageName) || null,
+    [datasetState.sourceImages, selectedSourceImageName],
+  );
+  const nextPendingSourceImage = useMemo(() => {
+    if (!datasetState.sourceImages.length) {
+      return null;
+    }
+    const ordered = datasetState.sourceImages;
+    const currentIndex = ordered.findIndex((item) => item.name === selectedSourceImageName);
+    if (currentIndex >= 0) {
+      for (let index = currentIndex + 1; index < ordered.length; index += 1) {
+        if (!ordered[index].has_annotation) {
+          return ordered[index];
+        }
+      }
+    }
+    return ordered.find((item) => !item.has_annotation) || null;
+  }, [datasetState.sourceImages, selectedSourceImageName]);
   const selectedClassAdvice = useMemo(
     () => datasetState.classAdvices.find((item) => item.class_name === selectedClass) || null,
     [datasetState.classAdvices, selectedClass],
@@ -808,8 +1048,12 @@ export function AnnotationWorkspace({
 
           <div className="annotation-sidebar__stats">
             <article className="annotation-sidebar__stat">
-              <span>原始样本</span>
+              <span>原始图片</span>
               <strong>{datasetState.counts.source}</strong>
+            </article>
+            <article className="annotation-sidebar__stat">
+              <span>已标注</span>
+              <strong>{datasetState.counts.annotated}</strong>
             </article>
             <article className="annotation-sidebar__stat">
               <span>Train</span>
@@ -822,6 +1066,14 @@ export function AnnotationWorkspace({
           </div>
 
           <div className="native-inline-actions">
+            <button
+              type="button"
+              className="primary"
+              onClick={openSourceFolderPicker}
+              disabled={!canOperate || !canWrite || !datasetState.selectedDataset || uploadingSourceImages}
+            >
+              {uploadingSourceImages ? "导入中..." : "上传图片文件夹"}
+            </button>
             <button type="button" className="secondary" onClick={handleDatasetDownload} disabled={!canOperate || !datasetState.selectedDataset}>
               下载数据集
             </button>
@@ -999,6 +1251,66 @@ export function AnnotationWorkspace({
           </div>
         </div>
 
+        <div className="native-workspace__group annotation-sidebar__section annotation-sidebar__section--create">
+          <div className="annotation-sidebar__section-head">
+            <div>
+              <p className="workspace__section-label">04 Import</p>
+              <h4>导入本地现成数据集</h4>
+            </div>
+            <span className="native-pill native-pill--neutral">
+              目录直传
+            </span>
+          </div>
+
+          <p className="native-hint">
+            这里导入的是已经整理好的本地数据集目录，例如包含 `classes.txt`、`images/`、`labels/` 的 YOLO 结构。
+          </p>
+
+          <div className="annotation-clone-card">
+            <strong>{datasetImportFolderLabel || "尚未选择目录"}</strong>
+            <p>{datasetImportFiles.length ? `已选 ${datasetImportFiles.length} 个文件，可直接导入。` : "点击下面按钮后选择本地数据集文件夹。支持直接选整个目录，不需要先手动压缩。"} </p>
+          </div>
+
+          <label className="native-field">
+            <span>导入后数据集名称</span>
+            <input
+              value={datasetImportName}
+              onChange={(event) => setDatasetImportName(event.target.value)}
+              placeholder="留空则尝试使用目录名"
+              disabled={!canOperate}
+            />
+          </label>
+
+          <label className="native-checkbox">
+            <input
+              type="checkbox"
+              checked={datasetImportPublic}
+              onChange={(event) => setDatasetImportPublic(event.target.checked)}
+              disabled={!canOperate}
+            />
+            <span>导入为公开数据集</span>
+          </label>
+
+          <div className="native-inline-actions">
+            <button
+              type="button"
+              className="secondary"
+              onClick={openDatasetFolderImportPicker}
+              disabled={!canOperate || importingDatasetFolder}
+            >
+              选择本地数据集目录
+            </button>
+            <button
+              type="button"
+              className="primary"
+              onClick={handleDatasetFolderImport}
+              disabled={!canOperate || !datasetImportFiles.length || importingDatasetFolder}
+            >
+              {importingDatasetFolder ? "导入中..." : "导入现成数据集"}
+            </button>
+          </div>
+        </div>
+
         {renderStatusFeedback()}
       </>
     );
@@ -1027,7 +1339,7 @@ export function AnnotationWorkspace({
           <article className="annotation-ops-banner__card">
             <span>下一步</span>
             <strong>{datasetState.classes.length ? "进入标注" : "先准备类别"}</strong>
-            <p>{datasetState.classes.length ? "类别已经就绪，可以开始导图和框选。" : "没有类别时，不建议直接开始标注。"}</p>
+            <p>{datasetState.classes.length ? "类别已经就绪，建议先导入图片文件夹，再逐张标注。" : "没有类别时，不建议直接开始标注。"}</p>
           </article>
         </div>
 
@@ -1092,6 +1404,14 @@ export function AnnotationWorkspace({
 
         <div className="annotation-toolbar annotation-toolbar--setup">
           <div className="annotation-toolbar__group">
+            <button
+              type="button"
+              className="primary"
+              onClick={openSourceFolderPicker}
+              disabled={!canOperate || !canWrite || !datasetState.selectedDataset || uploadingSourceImages}
+            >
+              {uploadingSourceImages ? "导入中..." : "上传图片文件夹"}
+            </button>
             <button type="button" className="secondary" onClick={() => imageInputRef.current?.click()} disabled={!canOperate}>
               直接导入图片
             </button>
@@ -1121,7 +1441,7 @@ export function AnnotationWorkspace({
           </div>
           <div>
             <span>当前图片</span>
-            <strong>{imageFile?.name || "未载入"}</strong>
+            <strong>{selectedSourceImageName || imageFile?.name || "未载入"}</strong>
           </div>
         </div>
 
@@ -1163,11 +1483,27 @@ export function AnnotationWorkspace({
 
         <div className="annotation-toolbar annotation-toolbar--compact">
           <div className="annotation-toolbar__group">
+            <button
+              type="button"
+              className="primary"
+              onClick={openSourceFolderPicker}
+              disabled={!canOperate || !canWrite || !datasetState.selectedDataset || uploadingSourceImages}
+            >
+              {uploadingSourceImages ? "导入中..." : "上传图片文件夹"}
+            </button>
             <button type="button" className="primary" onClick={() => imageInputRef.current?.click()} disabled={!canOperate}>
               选择标注图片
             </button>
             <button type="button" className="secondary" onClick={handleUseRecognitionImage} disabled={!canOperate || !recognitionPayload?.file}>
               使用识别图片
+            </button>
+            <button
+              type="button"
+              className="secondary"
+              onClick={handleLoadNextPendingSourceImage}
+              disabled={!canOperate || !nextPendingSourceImage || Boolean(loadingSourceImageName)}
+            >
+              {loadingSourceImageName ? "载入中..." : "下一张未标注"}
             </button>
             <button
               type="button"
@@ -1182,7 +1518,7 @@ export function AnnotationWorkspace({
             </button>
           </div>
           <div className="annotation-toolbar__group">
-            <button type="button" className="secondary" onClick={() => setBoxes([])} disabled={!canOperate || !boxes.length}>
+            <button type="button" className="secondary" onClick={handleClearBoxes} disabled={!canOperate || !boxes.length}>
               清空标注
             </button>
             <button type="button" className="secondary" onClick={handleDeleteSelectedBox} disabled={!canOperate || selectedIndex < 0}>
@@ -1235,8 +1571,14 @@ export function AnnotationWorkspace({
           </article>
           <article className="annotation-ops-banner__card">
             <span>当前图片</span>
-            <strong>{imageFile?.name || "未载入"}</strong>
-            <p>{imageFile ? `已准备 ${boxes.length} 个标注框。` : "可从本地上传，也可直接复用识别页图片。"}</p>
+            <strong>{selectedSourceImageName || imageFile?.name || "未载入"}</strong>
+            <p>
+              {selectedSourceImageName
+                ? `当前来自数据集原图队列${currentSourceImageMeta?.has_annotation ? "，已存在历史标注。" : "，尚未完成标注。"}`
+                : imageFile
+                  ? `已准备 ${boxes.length} 个标注框。`
+                  : "可从本地上传，也可直接复用识别页图片。"}
+            </p>
           </article>
           <article className="annotation-ops-banner__card">
             <span>当前状态</span>
@@ -1291,11 +1633,55 @@ export function AnnotationWorkspace({
               <p>{selectedDatasetTemplateLabel}</p>
               <div className="annotation-context-pills">
                 <span className="native-pill native-pill--neutral">{datasetState.classes.length} 个类别</span>
-                <span className="native-pill native-pill--neutral">{datasetState.counts.source} 张原始样本</span>
+                <span className="native-pill native-pill--neutral">{datasetState.counts.source} 张原始图片</span>
+                <span className="native-pill native-pill--neutral">{datasetState.counts.annotated} 张已标注</span>
               </div>
             </div>
           </aside>
         </div>
+
+        <section className="asset-collection">
+          <div className="asset-collection__head">
+            <div>
+              <p className="workspace__section-label">Queue</p>
+              <h3>原图标注队列</h3>
+            </div>
+            <span className="native-pill native-pill--neutral">{datasetState.sourceImages.length} 张</span>
+          </div>
+          {!datasetState.sourceImages.length ? (
+            <div className="native-empty native-empty--compact">
+              <p>先上传图片文件夹，把原始图片放进当前数据集，再逐张标注。</p>
+            </div>
+          ) : (
+            <div className="asset-rows">
+              {datasetState.sourceImages.map((item) => (
+                <article key={item.name} className={`asset-row asset-row--compact${selectedSourceImageName === item.name ? " is-active" : ""}`}>
+                  <div className="asset-row__main">
+                    <div className="asset-row__title">
+                      <strong>{item.name}</strong>
+                      <div className="asset-row__badges">
+                        <span className={`native-pill ${item.has_annotation ? "native-pill--accent" : "native-pill--neutral"}`}>
+                          {item.has_annotation ? `已标注 ${item.annotation_count}` : "待标注"}
+                        </span>
+                      </div>
+                    </div>
+                    <p>{item.updated_at || "刚刚导入"}</p>
+                  </div>
+                  <div className="asset-row__actions">
+                    <button
+                      type="button"
+                      className="secondary native-utility-button"
+                      onClick={() => loadDatasetSourceImage(item.name)}
+                      disabled={loadingSourceImageName === item.name}
+                    >
+                      {loadingSourceImageName === item.name ? "载入中..." : (item.has_annotation ? "继续标注" : "开始标注")}
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
 
         <section className="asset-collection">
           <div className="asset-collection__head">
@@ -1435,9 +1821,14 @@ export function AnnotationWorkspace({
 
         <div className="annotation-ops-banner annotation-ops-banner--train">
           <article className="annotation-ops-banner__card">
-            <span>原始样本</span>
+            <span>原始图片</span>
             <strong>{datasetState.counts.source}</strong>
-            <p>当前数据集可用于增强和切分的原始图片数量。</p>
+            <p>当前数据集原图总量，适合用来跟踪待标注池规模。</p>
+          </article>
+          <article className="annotation-ops-banner__card">
+            <span>已标注</span>
+            <strong>{datasetState.counts.annotated}</strong>
+            <p>真正可以参与增强和训练切分的原图数量。</p>
           </article>
           <article className="annotation-ops-banner__card">
             <span>训练集</span>
@@ -1608,6 +1999,25 @@ export function AnnotationWorkspace({
     <>
       <section className="native-workspace native-workspace--annotation">
         <input ref={imageInputRef} className="native-file-input" type="file" accept="image/*" onChange={handleImageChange} disabled={!canOperate} />
+        <input
+          ref={sourceFolderInputRef}
+          className="native-file-input"
+          type="file"
+          accept="image/*"
+          multiple
+          webkitdirectory=""
+          onChange={handleSourceFolderUpload}
+          disabled={!canOperate || !canWrite}
+        />
+        <input
+          ref={datasetFolderImportInputRef}
+          className="native-file-input"
+          type="file"
+          multiple
+          webkitdirectory=""
+          onChange={handleDatasetFolderImportSelection}
+          disabled={!canOperate}
+        />
 
         <div className="native-workspace__panel native-workspace__panel--controls annotation-sidebar">
           <div className="native-workspace__section-head">

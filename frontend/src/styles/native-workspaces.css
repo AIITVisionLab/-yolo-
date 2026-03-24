@@ -1264,6 +1264,11 @@
   gap: 10px;
 }
 
+.asset-rows {
+  display: grid;
+  gap: 10px;
+}
+
 .asset-list--compact {
   gap: 8px;
 }

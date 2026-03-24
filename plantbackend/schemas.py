@@ -265,6 +265,23 @@ class AiRecommendationResponse(BaseModel):
     data: AiAdviceData
 
 
+class AnnotationBoxItem(BaseModel):
+    label: str
+    x1: float
+    y1: float
+    x2: float
+    y2: float
+    source: str = "manual"
+
+
+class AnnotationSourceImageItem(BaseModel):
+    name: str
+    has_annotation: bool = False
+    annotation_count: int = 0
+    size_bytes: int = 0
+    updated_at: Optional[str] = None
+
+
 class AnnotationClassesData(BaseModel):
     selected_dataset: str
     available_datasets: List[str]
@@ -276,6 +293,9 @@ class AnnotationClassesData(BaseModel):
     images_dir: str
     labels_dir: str
     source_pair_count: int
+    source_image_count: int = 0
+    annotated_source_count: int = 0
+    source_images: List[AnnotationSourceImageItem] = Field(default_factory=list)
     train_pair_count: int
     val_pair_count: int
     selected_dataset_template_key: Optional[str] = None
@@ -307,6 +327,22 @@ class AnnotationClassesResponse(BaseModel):
     success: bool
     message: str
     data: AnnotationClassesData
+
+
+class AnnotationSourceImageDetailData(BaseModel):
+    dataset_name: str
+    image_name: str
+    has_annotation: bool = False
+    annotation_count: int = 0
+    image_path: str
+    label_path: str
+    annotations: List[AnnotationBoxItem] = Field(default_factory=list)
+
+
+class AnnotationSourceImageDetailResponse(BaseModel):
+    success: bool
+    message: str
+    data: AnnotationSourceImageDetailData
 
 
 class AnnotationDatasetCreateRequest(BaseModel):

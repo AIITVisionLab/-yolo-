@@ -57,11 +57,15 @@ try:
         AiRecommendationResponse,
         AnnotationAugmentData,
         AnnotationAugmentRequest,
+        AnnotationBoxItem,
         AnnotationAugmentResponse,
         AnnotationClassCreateRequest,
         AnnotationClassTemplateItem,
         AnnotationClassDeleteRequest,
         AnnotationDatasetItem,
+        AnnotationSourceImageDetailData,
+        AnnotationSourceImageDetailResponse,
+        AnnotationSourceImageItem,
         ClassAdviceData,
         AnnotationClassesData,
         AnnotationClassesResponse,
@@ -124,11 +128,15 @@ except ImportError:
         AiRecommendationResponse,
         AnnotationAugmentData,
         AnnotationAugmentRequest,
+        AnnotationBoxItem,
         AnnotationAugmentResponse,
         AnnotationClassCreateRequest,
         AnnotationClassTemplateItem,
         AnnotationClassDeleteRequest,
         AnnotationDatasetItem,
+        AnnotationSourceImageDetailData,
+        AnnotationSourceImageDetailResponse,
+        AnnotationSourceImageItem,
         ClassAdviceData,
         AnnotationClassesData,
         AnnotationClassesResponse,
@@ -1128,6 +1136,9 @@ def build_annotation_classes_response(
                 images_dir="",
                 labels_dir="",
                 source_pair_count=0,
+                source_image_count=0,
+                annotated_source_count=0,
+                source_images=[],
                 train_pair_count=0,
                 val_pair_count=0,
                 selected_dataset_template_key="blank",
@@ -1148,6 +1159,9 @@ def build_annotation_classes_response(
         build_annotation_dataset_item(selected_dataset, current_user),
     )
     source_pair_count = count_available_source_pairs(structure)
+    source_image_count = count_raw_source_images(structure)
+    annotated_source_count = count_annotated_source_images(structure)
+    source_images = build_annotation_source_image_items(structure)
     train_pair_count = len(collect_image_label_pairs(structure["images_train"], structure["labels_train"]))
     val_pair_count = len(collect_image_label_pairs(structure["images_val"], structure["labels_val"]))
     return AnnotationClassesResponse(
@@ -1164,6 +1178,9 @@ def build_annotation_classes_response(
             images_dir=str(structure["images_raw"]),
             labels_dir=str(structure["labels_raw"]),
             source_pair_count=source_pair_count,
+            source_image_count=source_image_count,
+            annotated_source_count=annotated_source_count,
+            source_images=source_images,
             train_pair_count=train_pair_count,
             val_pair_count=val_pair_count,
             selected_dataset_template_key=detect_annotation_class_template_key(classes, class_templates),
@@ -1226,12 +1243,27 @@ def create_annotation_dataset(
 
 
 def delete_annotation_dataset(dataset_name: str, current_user: Dict[str, object]) -> str:
-    dataset_key = ensure_dataset_write_access(dataset_name, current_user, allow_auto_create=False)
+    dataset_key = safe_annotation_dataset_name(dataset_name)
+    sync_annotation_dataset_registry()
+    owner = auth_store.get_dataset_owner(dataset_key)
     structure = get_annotation_dataset_structure(dataset_key)
-    if not structure["dataset_dir"].exists():
-        raise RuntimeError(f"数据集不存在：{dataset_key}")
 
-    shutil.rmtree(structure["dataset_dir"])
+    if owner:
+        if not can_write_dataset(owner, current_user):
+            raise_dataset_not_found(dataset_key)
+    elif user_is_admin(current_user) and structure["dataset_dir"].exists():
+        auth_store.ensure_dataset_access_entry(dataset_key, int(current_user["id"]), is_public=False)
+    else:
+        raise_dataset_not_found(dataset_key)
+
+    # A dataset may already have been removed from disk by cleanup scripts or
+    # manual filesystem operations. In that case we still want the admin UI to
+    # be able to clear the stale ownership record.
+    if structure["dataset_dir"].is_dir():
+        shutil.rmtree(structure["dataset_dir"])
+    elif structure["dataset_dir"].exists():
+        structure["dataset_dir"].unlink()
+
     auth_store.delete_dataset_owner(dataset_key)
     remaining = list_annotation_datasets(current_user)
     return remaining[0] if remaining else ""
@@ -1424,68 +1456,121 @@ def read_uploaded_dataset_classes(source_root: Path) -> List[str]:
     return classes
 
 
+def normalize_uploaded_dataset_relative_path(raw_path: str) -> Path:
+    normalized = str(raw_path or "").replace("\\", "/").strip("/")
+    if not normalized:
+        raise RuntimeError("上传的数据集文件路径为空。")
+
+    relative_path = Path(normalized)
+    if relative_path.is_absolute() or any(part in {"", ".", ".."} for part in relative_path.parts):
+        raise RuntimeError("上传的数据集包含非法路径。")
+    return relative_path
+
+
+def infer_uploaded_dataset_name(relative_paths: List[str], fallback_name: str = "dataset_import") -> str:
+    normalized_paths = [normalize_uploaded_dataset_relative_path(item) for item in relative_paths if str(item or "").strip()]
+    if not normalized_paths:
+        return fallback_name
+
+    first_parts = [path.parts[0] for path in normalized_paths if len(path.parts) > 1]
+    if first_parts:
+        candidate = first_parts[0]
+        if all(path.parts[0] == candidate for path in normalized_paths if len(path.parts) > 1):
+            return candidate
+
+    return normalized_paths[0].stem or fallback_name
+
+
+def materialize_uploaded_dataset_files(files: List[UploadFile], relative_paths: List[str], destination_dir: Path) -> None:
+    if not files:
+        raise RuntimeError("请至少选择一个数据集文件。")
+    if len(files) != len(relative_paths):
+        raise RuntimeError("上传的数据集文件与路径数量不一致。")
+
+    destination_dir.mkdir(parents=True, exist_ok=True)
+    destination_root = destination_dir.resolve()
+    for file, raw_relative_path in zip(files, relative_paths):
+        relative_path = normalize_uploaded_dataset_relative_path(raw_relative_path)
+        target_path = (destination_dir / relative_path).resolve()
+        try:
+            target_path.relative_to(destination_root)
+        except ValueError as exc:
+            raise RuntimeError("上传的数据集包含越界路径。") from exc
+        save_uploaded_file(file, target_path)
+
+
+def import_annotation_dataset_from_source_root(
+    dataset_name: str,
+    source_root: Path,
+    current_user: Dict[str, object],
+    is_public: bool,
+) -> str:
+    dataset_key = safe_annotation_dataset_name(dataset_name)
+    structure = get_annotation_dataset_structure(dataset_key)
+    existing_owner = auth_store.get_dataset_owner(dataset_key)
+    if existing_owner or structure["dataset_dir"].exists():
+        raise_dataset_name_unavailable()
+
+    classes = read_uploaded_dataset_classes(source_root)
+    try:
+        _, target_structure = ensure_annotation_dataset_structure(dataset_key, classes)
+
+        for relative_dir in (
+            Path("images/raw"),
+            Path("labels/raw"),
+            Path("images/train"),
+            Path("labels/train"),
+            Path("images/val"),
+            Path("labels/val"),
+        ):
+            copy_directory_contents(source_root / relative_dir, target_structure["dataset_dir"] / relative_dir)
+
+        source_images_root = source_root / "images"
+        source_labels_root = source_root / "labels"
+        if source_images_root.exists() and source_labels_root.exists():
+            has_nested_structure = any(
+                (source_images_root / part).exists() or (source_labels_root / part).exists()
+                for part in ("raw", "train", "val")
+            )
+            if not has_nested_structure:
+                copy_directory_contents(source_images_root, target_structure["images_raw"])
+                copy_directory_contents(source_labels_root, target_structure["labels_raw"])
+
+        source_pair_count = count_available_source_pairs(target_structure)
+        train_pair_count = len(collect_image_label_pairs(target_structure["images_train"], target_structure["labels_train"]))
+        val_pair_count = len(collect_image_label_pairs(target_structure["images_val"], target_structure["labels_val"]))
+        if source_pair_count <= 0 and train_pair_count <= 0 and val_pair_count <= 0:
+            raise RuntimeError("导入后的数据集没有找到任何可用的图片标签对。")
+
+        auth_store.ensure_dataset_access_entry(
+            dataset_key,
+            int(current_user["id"]),
+            is_public=is_public,
+            overwrite_existing=True,
+        )
+        return dataset_key
+    except Exception:
+        shutil.rmtree(structure["dataset_dir"], ignore_errors=True)
+        auth_store.delete_dataset_owner(dataset_key)
+        raise
+
+
 def import_annotation_dataset_archive(
     dataset_name: str,
     archive_file: UploadFile,
     current_user: Dict[str, object],
     is_public: bool,
 ) -> str:
-    dataset_key = safe_annotation_dataset_name(dataset_name or Path(archive_file.filename or "").stem)
-    structure = get_annotation_dataset_structure(dataset_key)
-    existing_owner = auth_store.get_dataset_owner(dataset_key)
-    if existing_owner or structure["dataset_dir"].exists():
-        raise_dataset_name_unavailable()
-
-    with tempfile.TemporaryDirectory(prefix=f"dataset_import_{dataset_key}_") as temp_dir_name:
+    desired_name = dataset_name or Path(archive_file.filename or "").stem
+    temp_prefix_key = safe_annotation_dataset_name(desired_name)
+    with tempfile.TemporaryDirectory(prefix=f"dataset_import_{temp_prefix_key}_") as temp_dir_name:
         temp_dir = Path(temp_dir_name)
         archive_path = temp_dir / "dataset.zip"
         extract_root = temp_dir / "extract"
         save_uploaded_file(archive_file, archive_path)
         extract_zip_archive_safely(archive_path, extract_root)
         source_root = resolve_uploaded_dataset_source_root(extract_root)
-        classes = read_uploaded_dataset_classes(source_root)
-
-        try:
-            _, target_structure = ensure_annotation_dataset_structure(dataset_key, classes)
-
-            for relative_dir in (
-                Path("images/raw"),
-                Path("labels/raw"),
-                Path("images/train"),
-                Path("labels/train"),
-                Path("images/val"),
-                Path("labels/val"),
-            ):
-                copy_directory_contents(source_root / relative_dir, target_structure["dataset_dir"] / relative_dir)
-
-            source_images_root = source_root / "images"
-            source_labels_root = source_root / "labels"
-            if source_images_root.exists() and source_labels_root.exists():
-                has_nested_structure = any(
-                    (source_images_root / part).exists() or (source_labels_root / part).exists()
-                    for part in ("raw", "train", "val")
-                )
-                if not has_nested_structure:
-                    copy_directory_contents(source_images_root, target_structure["images_raw"])
-                    copy_directory_contents(source_labels_root, target_structure["labels_raw"])
-
-            source_pair_count = count_available_source_pairs(target_structure)
-            train_pair_count = len(collect_image_label_pairs(target_structure["images_train"], target_structure["labels_train"]))
-            val_pair_count = len(collect_image_label_pairs(target_structure["images_val"], target_structure["labels_val"]))
-            if source_pair_count <= 0 and train_pair_count <= 0 and val_pair_count <= 0:
-                raise RuntimeError("导入后的数据集没有找到任何可用的图片标签对。")
-
-            auth_store.ensure_dataset_access_entry(
-                dataset_key,
-                int(current_user["id"]),
-                is_public=is_public,
-                overwrite_existing=True,
-            )
-            return dataset_key
-        except Exception:
-            shutil.rmtree(structure["dataset_dir"], ignore_errors=True)
-            auth_store.delete_dataset_owner(dataset_key)
-            raise
+        return import_annotation_dataset_from_source_root(desired_name, source_root, current_user, is_public)
 
 
 def build_admin_console_response(current_user: Dict[str, object], message: str = "管理员总控已就绪") -> AdminConsoleResponse:
@@ -1807,6 +1892,74 @@ def list_images(img_dir: Path) -> List[Path]:
     if not img_dir.exists():
         return []
     return sorted(p for p in img_dir.iterdir() if p.is_file() and p.suffix.lower() in IMG_EXTS)
+
+
+def count_raw_source_images(structure: Dict[str, Path]) -> int:
+    return len(list_images(structure["images_raw"]))
+
+
+def count_annotated_source_images(structure: Dict[str, Path]) -> int:
+    return len(collect_image_label_pairs(structure["images_raw"], structure["labels_raw"]))
+
+
+def read_annotation_boxes(label_path: Path, classes: List[str], width: int, height: int) -> List[AnnotationBoxItem]:
+    if not label_path.exists() or width <= 0 or height <= 0:
+        return []
+
+    annotations: List[AnnotationBoxItem] = []
+    for raw_line in label_path.read_text(encoding="utf-8").splitlines():
+        parts = raw_line.strip().split()
+        if len(parts) != 5:
+            continue
+
+        try:
+            class_index = int(parts[0])
+            center_x = float(parts[1]) * width
+            center_y = float(parts[2]) * height
+            box_width = float(parts[3]) * width
+            box_height = float(parts[4]) * height
+        except (TypeError, ValueError):
+            continue
+
+        if class_index < 0 or class_index >= len(classes):
+            continue
+
+        x1 = max(0.0, center_x - (box_width / 2.0))
+        y1 = max(0.0, center_y - (box_height / 2.0))
+        x2 = min(float(width), center_x + (box_width / 2.0))
+        y2 = min(float(height), center_y + (box_height / 2.0))
+        annotations.append(
+            AnnotationBoxItem(
+                label=classes[class_index],
+                x1=x1,
+                y1=y1,
+                x2=x2,
+                y2=y2,
+                source="manual",
+            )
+        )
+
+    return annotations
+
+
+def build_annotation_source_image_items(structure: Dict[str, Path]) -> List[AnnotationSourceImageItem]:
+    items: List[AnnotationSourceImageItem] = []
+    for image_path in list_images(structure["images_raw"]):
+        label_path = structure["labels_raw"] / f"{image_path.stem}.txt"
+        annotation_count = 0
+        if label_path.exists():
+            annotation_count = len([line for line in label_path.read_text(encoding="utf-8").splitlines() if line.strip()])
+        updated_at = datetime.fromtimestamp(image_path.stat().st_mtime).astimezone().isoformat(timespec="seconds")
+        items.append(
+            AnnotationSourceImageItem(
+                name=image_path.name,
+                has_annotation=label_path.exists(),
+                annotation_count=annotation_count,
+                size_bytes=int(image_path.stat().st_size or 0),
+                updated_at=updated_at,
+            )
+        )
+    return items
 
 
 def collect_image_label_pairs(images_dir: Path, labels_dir: Path) -> List[Tuple[Path, Path]]:
@@ -2195,6 +2348,57 @@ def build_models_response(current_user: Dict[str, object], message: str = "模�
     )
 
 
+def resolve_unique_annotation_source_image_path(structure: Dict[str, Path], original_filename: str) -> Path:
+    safe_name = Path(original_filename or "").name
+    extension = Path(safe_name).suffix.lower()
+    if extension not in IMG_EXTS:
+        extension = ".jpg"
+    stem = safe_annotation_stem(safe_name or "annotation_image")
+    image_path = structure["images_raw"] / f"{stem}{extension}"
+    counter = 1
+    while image_path.exists():
+        image_path = structure["images_raw"] / f"{stem}_{counter}{extension}"
+        counter += 1
+    return image_path
+
+
+async def import_annotation_source_images(
+    files: List[UploadFile],
+    dataset_name: Optional[str],
+    current_user: Dict[str, object],
+) -> Tuple[str, int]:
+    dataset_key, classes, structure = load_annotation_classes(dataset_name, current_user, require_write=True)
+    ensure_annotation_dataset_structure(dataset_key, classes)
+
+    imported_count = 0
+    for file in files:
+        ensure_supported_uploaded_image(file)
+        image_bytes = await file.read()
+        if not image_bytes:
+            raise HTTPException(status_code=400, detail=f"上传的图片为空：{Path(file.filename or '').name or '未命名图片'}")
+        try:
+            image = Image.open(BytesIO(image_bytes))
+            image.load()
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"上传的图片无效：{Path(file.filename or '').name or '未命名图片'}") from exc
+
+        image_path = resolve_unique_annotation_source_image_path(structure, file.filename or "annotation_image.jpg")
+        extension = image_path.suffix.lower()
+        if extension in {".jpg", ".jpeg"}:
+            image.convert("RGB").save(image_path, format="JPEG", quality=95)
+        elif extension == ".png":
+            image.save(image_path, format="PNG")
+        elif extension == ".bmp":
+            image.save(image_path, format="BMP")
+        elif extension in {".tif", ".tiff"}:
+            image.save(image_path, format="TIFF")
+        else:
+            image.save(image_path, format="WEBP", quality=95)
+        imported_count += 1
+
+    return dataset_key, imported_count
+
+
 def parse_annotation_items(raw_annotations: str) -> List[dict]:
     try:
         payload = json.loads(raw_annotations)
@@ -2239,6 +2443,7 @@ def save_annotation_files(
     annotations: List[dict],
     dataset_name: Optional[str],
     current_user: Dict[str, object],
+    source_filename: Optional[str] = None,
 ) -> AnnotationSaveData:
     dataset_key, classes, structure = load_annotation_classes(dataset_name, current_user, require_write=True)
     class_to_index = {label: index for index, label in enumerate(classes)}
@@ -2254,18 +2459,27 @@ def save_annotation_files(
         raise HTTPException(status_code=400, detail="上传的标注图片尺寸无效。")
 
     extension = Path(filename or "annotation_image.jpg").suffix.lower()
-    if extension not in {".jpg", ".jpeg", ".png", ".webp"}:
+    if source_filename:
+        source_basename = Path(source_filename).name
+        if not source_basename:
+            raise HTTPException(status_code=400, detail="待覆盖的原始图片文件名无效。")
+        extension = Path(source_basename).suffix.lower() or extension
+        raw_image_path = structure["images_raw"] / source_basename
+        raw_label_path = structure["labels_raw"] / f"{Path(source_basename).stem}.txt"
+
+    if extension not in {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"}:
         extension = ".jpg"
 
-    stem = safe_annotation_stem(filename)
-    raw_image_path = structure["images_raw"] / f"{stem}{extension}"
-    raw_label_path = structure["labels_raw"] / f"{stem}.txt"
+    if not source_filename:
+        stem = safe_annotation_stem(filename)
+        raw_image_path = structure["images_raw"] / f"{stem}{extension}"
+        raw_label_path = structure["labels_raw"] / f"{stem}.txt"
 
-    counter = 1
-    while raw_image_path.exists() or raw_label_path.exists():
-        raw_image_path = structure["images_raw"] / f"{stem}_{counter}{extension}"
-        raw_label_path = structure["labels_raw"] / f"{stem}_{counter}.txt"
-        counter += 1
+        counter = 1
+        while raw_image_path.exists() or raw_label_path.exists():
+            raw_image_path = structure["images_raw"] / f"{stem}_{counter}{extension}"
+            raw_label_path = structure["labels_raw"] / f"{stem}_{counter}.txt"
+            counter += 1
 
     yolo_lines: List[str] = []
     saved_classes: List[str] = []
@@ -2294,6 +2508,10 @@ def save_annotation_files(
         image.convert("RGB").save(raw_image_path, format="JPEG", quality=95)
     elif extension == ".png":
         image.save(raw_image_path, format="PNG")
+    elif extension == ".bmp":
+        image.save(raw_image_path, format="BMP")
+    elif extension in {".tif", ".tiff"}:
+        image.save(raw_image_path, format="TIFF")
     else:
         image.save(raw_image_path, format="WEBP", quality=95)
 
@@ -2748,6 +2966,28 @@ def create_dataset(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@router.post("/annotation/datasets/import-folder", response_model=AnnotationClassesResponse)
+async def import_dataset_from_folder(
+    current_user: Dict[str, object] = Depends(get_current_user),
+    files: List[UploadFile] = File(...),
+    relative_paths: List[str] = Form(...),
+    dataset_name: Optional[str] = Form(default=None),
+    is_public: bool = Form(default=False),
+) -> AnnotationClassesResponse:
+    try:
+        inferred_name = dataset_name or infer_uploaded_dataset_name(relative_paths)
+        with tempfile.TemporaryDirectory(prefix=f"dataset_folder_import_{safe_annotation_dataset_name(inferred_name)}_") as temp_dir_name:
+            temp_dir = Path(temp_dir_name)
+            upload_root = temp_dir / "upload"
+            materialize_uploaded_dataset_files(files, relative_paths, upload_root)
+            source_root = resolve_uploaded_dataset_source_root(upload_root)
+            imported_dataset = import_annotation_dataset_from_source_root(inferred_name, source_root, current_user, is_public)
+        visibility_text = "公开" if is_public else "私有"
+        return build_annotation_classes_response(current_user, imported_dataset, message=f"已导入{visibility_text}数据集：{imported_dataset}")
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.get("/annotation/datasets/{dataset_name}/download")
 def download_annotation_dataset(
     dataset_name: str,
@@ -2768,6 +3008,83 @@ def download_annotation_dataset(
         media_type="application/zip",
         filename=f"{dataset_key}_dataset.zip",
         background=BackgroundTask(remove_temp_file, archive_path),
+    )
+
+
+@router.post("/annotation/source-images/upload", response_model=AnnotationClassesResponse)
+async def upload_annotation_source_images(
+    dataset_name: Optional[str] = Form(default=None),
+    files: List[UploadFile] = File(...),
+    current_user: Dict[str, object] = Depends(get_current_user),
+) -> AnnotationClassesResponse:
+    if not files:
+        raise HTTPException(status_code=400, detail="请至少上传一张图片。")
+
+    try:
+        dataset_key, imported_count = await import_annotation_source_images(files, dataset_name, current_user)
+        return build_annotation_classes_response(
+            current_user,
+            dataset_key,
+            message=f"已导入 {imported_count} 张原始图片到数据集：{dataset_key}",
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/annotation/source-images/{dataset_name}/{image_name}")
+def download_annotation_source_image(
+    dataset_name: str,
+    image_name: str,
+    current_user: Dict[str, object] = Depends(get_current_user),
+) -> FileResponse:
+    dataset_key = ensure_dataset_access(dataset_name, current_user, allow_auto_create=False)
+    structure = get_annotation_dataset_structure(dataset_key)
+    source_image_name = Path(image_name or "").name
+    if not source_image_name:
+        raise HTTPException(status_code=404, detail="原始图片不存在。")
+
+    image_path = structure["images_raw"] / source_image_name
+    if not image_path.exists() or not image_path.is_file():
+        raise HTTPException(status_code=404, detail=f"原始图片不存在：{source_image_name}")
+
+    return FileResponse(path=str(image_path), filename=image_path.name)
+
+
+@router.get("/annotation/source-images/{dataset_name}/{image_name}/detail", response_model=AnnotationSourceImageDetailResponse)
+def get_annotation_source_image_detail(
+    dataset_name: str,
+    image_name: str,
+    current_user: Dict[str, object] = Depends(get_current_user),
+) -> AnnotationSourceImageDetailResponse:
+    dataset_key, classes, structure = load_annotation_classes(dataset_name, current_user, allow_auto_create=False)
+    source_image_name = Path(image_name or "").name
+    if not source_image_name:
+        raise HTTPException(status_code=404, detail="原始图片不存在。")
+
+    image_path = structure["images_raw"] / source_image_name
+    if not image_path.exists() or not image_path.is_file():
+        raise HTTPException(status_code=404, detail=f"原始图片不存在：{source_image_name}")
+
+    label_path = structure["labels_raw"] / f"{image_path.stem}.txt"
+    try:
+        with Image.open(image_path) as image:
+            width, height = image.size
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"无法读取原始图片：{source_image_name}") from exc
+
+    annotations = read_annotation_boxes(label_path, classes, width, height)
+    return AnnotationSourceImageDetailResponse(
+        success=True,
+        message="原始图片标注详情已就绪",
+        data=AnnotationSourceImageDetailData(
+            dataset_name=dataset_key,
+            image_name=image_path.name,
+            has_annotation=label_path.exists(),
+            annotation_count=len(annotations),
+            image_path=str(image_path),
+            label_path=str(label_path),
+            annotations=annotations,
+        ),
     )
 
 
@@ -2834,19 +3151,41 @@ def augment_annotation_dataset(
 
 @router.post("/annotation/save", response_model=AnnotationSaveResponse)
 async def save_annotation(
-    file: UploadFile = File(...),
+    file: Optional[UploadFile] = File(default=None),
     annotations: str = Form(...),
     dataset_name: Optional[str] = Form(default=None),
+    source_filename: Optional[str] = Form(default=None),
     current_user: Dict[str, object] = Depends(get_current_user),
 ) -> AnnotationSaveResponse:
-    ensure_supported_uploaded_image(file)
-
-    image_bytes = await file.read()
-    if not image_bytes:
-        raise HTTPException(status_code=400, detail="上传的标注图片为空。")
+    image_bytes: bytes
+    resolved_filename: str
+    if file is not None:
+        ensure_supported_uploaded_image(file)
+        image_bytes = await file.read()
+        if not image_bytes:
+            raise HTTPException(status_code=400, detail="上传的标注图片为空。")
+        resolved_filename = file.filename or source_filename or "annotation_image.jpg"
+    elif source_filename:
+        dataset_key = ensure_dataset_write_access(dataset_name, current_user, allow_auto_create=False)
+        structure = get_annotation_dataset_structure(dataset_key)
+        source_image_name = Path(source_filename).name
+        image_path = structure["images_raw"] / source_image_name
+        if not image_path.exists() or not image_path.is_file():
+            raise HTTPException(status_code=404, detail=f"原始图片不存在：{source_image_name}")
+        image_bytes = image_path.read_bytes()
+        resolved_filename = source_image_name
+    else:
+        raise HTTPException(status_code=400, detail="请上传标注图片，或指定已有原始图片。")
 
     annotation_items = parse_annotation_items(annotations)
-    saved = save_annotation_files(file.filename or "annotation_image.jpg", image_bytes, annotation_items, dataset_name, current_user)
+    saved = save_annotation_files(
+        resolved_filename,
+        image_bytes,
+        annotation_items,
+        dataset_name,
+        current_user,
+        source_filename=source_filename,
+    )
     return AnnotationSaveResponse(
         success=True,
         message="标注已按 YOLO 格式保存",

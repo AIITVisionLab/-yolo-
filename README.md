@@ -25,15 +25,67 @@ plant/
 └─ Makefile
 ```
 
+## 快速启动
+
+下面这组命令已经在当前仓库里实际验证通过。
+适用于仓库中已经存在 `plantbackend/.venv-train`、`frontend/dist` 和 `frontend/node_modules` 的情况。
+
+先启动后端：
+
+```bash
+./plantbackend/.venv-train/bin/python -m uvicorn plantbackend.asgi:app --host 127.0.0.1 --port 7800
+```
+
+再开一个终端启动前端静态服务：
+
+```bash
+python3 serve_frontend.py --host 127.0.0.1 --port 5500
+```
+
+启动后访问：
+
+- 前端：`http://127.0.0.1:5500`
+- 前端代理健康检查：`http://127.0.0.1:5500/api/health`
+- 后端健康检查：`http://127.0.0.1:7800/health`
+- 后端文档：`http://127.0.0.1:7800/docs`
+
+`serve_frontend.py` 会自动把 `/api/*` 请求代理到 `http://127.0.0.1:7800`。
+
 ## 本地开发
+
+如果你是第一次拉起这个项目，建议按下面步骤从零初始化。
 
 ### 后端
 
+如果只是启动识别 API，不需要训练功能，准备一个基础运行环境即可：
+
 ```bash
-python3 -m uvicorn plantbackend.asgi:app --host 127.0.0.1 --port 7800
+cd plantbackend
+cp -n .env.example .env
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -U pip
+python -m pip install fastapi uvicorn[standard] onnxruntime onnx numpy pillow python-multipart pydantic python-dotenv
+export BOOTSTRAP_ADMIN_PASSWORD="请改成你自己的强密码"
+cd ..
+./plantbackend/.venv/bin/python -m uvicorn plantbackend.asgi:app --host 127.0.0.1 --port 7800
 ```
 
-如果本机默认 Python 版本对 `torch/ultralytics` 不兼容，可以额外准备 `plantbackend/.venv-train` 作为训练专用环境。后端会自动优先使用这个解释器执行训练任务。
+如果你还需要训练和导出模型，推荐额外准备 Python 3.12 的训练环境：
+
+```bash
+cd plantbackend
+cp -n .env.example .env
+export BOOTSTRAP_ADMIN_PASSWORD="请改成你自己的强密码"
+python3.12 -m venv .venv-train
+source .venv-train/bin/activate
+python -m pip install -U pip
+python -m pip install -r requirements.txt
+cd ..
+./plantbackend/.venv-train/bin/python -m uvicorn plantbackend.asgi:app --host 127.0.0.1 --port 7800
+```
+
+如果本机默认 Python 版本对 `torch/ultralytics` 不兼容，优先使用上面的 `.venv-train` 方案。后端会自动优先使用这个解释器执行训练任务。
 
 ### 前端
 
@@ -42,6 +94,8 @@ cd frontend
 npm install
 npm run dev
 ```
+
+如果 `5500` 端口已经被占用，Vite 会因为 `strictPort` 配置直接退出。这时可以先关闭占用进程，或者改用下面的“构建产物预览”方式。
 
 访问地址：
 

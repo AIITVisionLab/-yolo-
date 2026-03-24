@@ -51,6 +51,55 @@ export async function createAnnotationDataset(token, payload) {
   });
 }
 
+export async function importAnnotationDatasetFolder(token, {
+  datasetName = "",
+  isPublic = false,
+  files = [],
+  relativePaths = [],
+}) {
+  const formData = new FormData();
+  if (datasetName) {
+    formData.append("dataset_name", datasetName);
+  }
+  formData.append("is_public", String(Boolean(isPublic)));
+  Array.from(files).forEach((file, index) => {
+    formData.append("files", file);
+    formData.append("relative_paths", relativePaths[index] || file.webkitRelativePath || file.name || `file_${index}`);
+  });
+  return requestApi("/annotation/datasets/import-folder", {
+    method: "POST",
+    token,
+    body: formData,
+  });
+}
+
+export async function uploadAnnotationSourceImages(token, { datasetName = "", files = [] }) {
+  const formData = new FormData();
+  if (datasetName) {
+    formData.append("dataset_name", datasetName);
+  }
+  Array.from(files).forEach((file) => {
+    formData.append("files", file);
+  });
+  return requestApi("/annotation/source-images/upload", {
+    method: "POST",
+    token,
+    body: formData,
+  });
+}
+
+export async function fetchAnnotationSourceImageDetail(token, datasetName, imageName) {
+  return requestApi(`/annotation/source-images/${encodeURIComponent(datasetName)}/${encodeURIComponent(imageName)}/detail`, {
+    token,
+  });
+}
+
+export async function downloadAnnotationSourceImage(token, datasetName, imageName) {
+  return requestBlob(`/annotation/source-images/${encodeURIComponent(datasetName)}/${encodeURIComponent(imageName)}`, {
+    token,
+  });
+}
+
 export async function deleteAnnotationDataset(token, datasetName) {
   return requestApi("/annotation/datasets/delete", {
     method: "POST",
@@ -95,11 +144,16 @@ export async function augmentAnnotationDataset(token, payload) {
   });
 }
 
-export async function saveAnnotationFile(token, { file, datasetName, annotations }) {
+export async function saveAnnotationFile(token, { file, datasetName, annotations, sourceFilename = "" }) {
   const formData = new FormData();
-  formData.append("file", file);
+  if (file) {
+    formData.append("file", file);
+  }
   formData.append("dataset_name", datasetName);
   formData.append("annotations", JSON.stringify(annotations));
+  if (sourceFilename) {
+    formData.append("source_filename", sourceFilename);
+  }
   return requestApi("/annotation/save", {
     method: "POST",
     token,
