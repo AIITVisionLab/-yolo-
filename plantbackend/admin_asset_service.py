@@ -10,6 +10,7 @@ try:
         read_augmentation_metadata,
     )
     from .config import settings
+    from .model_storage import resolve_model_file_path
     from .schemas import ManagedAugmentationItem, ManagedModelItem
 except ImportError:
     from augmentation_manager import (
@@ -18,6 +19,7 @@ except ImportError:
         read_augmentation_metadata,
     )
     from config import settings
+    from model_storage import resolve_model_file_path
     from schemas import ManagedAugmentationItem, ManagedModelItem
 
 
@@ -44,6 +46,8 @@ def save_uploaded_file(upload, target: Path) -> None:
                         f"上传文件过大，当前上限为 {int(settings.max_upload_bytes) // (1024 * 1024)} MB。"
                     )
                 destination.write(chunk)
+        if total_bytes <= 0:
+            raise RuntimeError("上传文件为空，请确认选择了有效文件后再试。")
     except Exception:
         target.unlink(missing_ok=True)
         raise
@@ -58,13 +62,16 @@ def list_managed_models(
 ) -> List[ManagedModelItem]:
     models: List[ManagedModelItem] = []
     for model_name in available_model_names:
-        model_path = Path(settings.models_dir) / model_name
+        model_path = resolve_model_file_path(Path(settings.models_dir), model_name)
+        if model_path is None:
+            continue
         if not model_path.exists():
             continue
         model_record = (model_records_by_name or {}).get(model_name, {})
         models.append(
             ManagedModelItem(
                 name=model_name,
+                display_name=str(model_record.get("display_name") or model_name),
                 size_bytes=int(model_path.stat().st_size),
                 uploaded_at=format_file_timestamp(model_path),
                 has_labels=model_path.with_suffix(".labels.json").exists(),

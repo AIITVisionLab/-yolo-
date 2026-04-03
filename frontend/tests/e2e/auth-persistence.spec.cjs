@@ -1,5 +1,5 @@
 const { test, expect } = require('@playwright/test');
-const { loginAsAdmin } = require('./helpers.cjs');
+const { FRONTEND_BASE_URL, loginAsAdmin } = require('./helpers.cjs');
 
 test('auth persists across hard navigation', async ({ page }) => {
   await loginAsAdmin(page);
@@ -8,13 +8,13 @@ test('auth persists across hard navigation', async ({ page }) => {
     const raw = window.localStorage.getItem('plant_auth_token');
     return raw ? JSON.parse(raw) : null;
   });
-  await page.goto('http://127.0.0.1:5500/?workspace=details', { waitUntil: 'networkidle' });
+  await page.goto(`${FRONTEND_BASE_URL}/?workspace=details`, { waitUntil: 'networkidle' });
   const after = await page.evaluate(() => {
     const raw = window.localStorage.getItem('plant_auth_token');
     return raw ? JSON.parse(raw) : null;
   });
   const userBlockCount = await page.locator('.topbar__user').count();
-  const dialogCount = await page.getByRole('dialog', { name: '登录与注册' }).count();
+  const dialogCount = await page.getByRole('dialog', { name: '登录账号' }).count();
 
   expect(before?.v).toBe(1);
   expect(typeof before?.iv).toBe('string');

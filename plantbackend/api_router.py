@@ -6,6 +6,7 @@ and a safer path for future router-by-router extraction.
 """
 
 import json
+import os
 import random
 import re
 import shutil
@@ -27,6 +28,7 @@ from fastapi import APIRouter, Body, Depends, File, Form, Header, HTTPException,
 from fastapi.responses import FileResponse
 from PIL import Image
 from starlette.background import BackgroundTask
+from starlette.concurrency import run_in_threadpool
 
 try:
     from .admin_asset_service import (
@@ -48,6 +50,19 @@ try:
     )
     from .auth_store import AuthStore
     from .config import settings
+    from .knowledge_base_service import KnowledgeBaseService
+    from .knowledge_store import KnowledgeStore
+    from .model_storage import (
+        build_model_name_index,
+        build_user_model_dir,
+        cleanup_empty_parent_directories,
+        infer_visibility_from_path,
+        iter_model_file_paths,
+        move_model_assets,
+        resolve_model_asset_paths,
+        resolve_model_file_path,
+        resolve_unique_model_targets as resolve_unique_model_storage_targets,
+    )
     from .model_service import ModelService
     from .schemas import (
         AdminConsoleData,
@@ -119,6 +134,19 @@ except ImportError:
     )
     from auth_store import AuthStore
     from config import settings
+    from knowledge_base_service import KnowledgeBaseService
+    from knowledge_store import KnowledgeStore
+    from model_storage import (
+        build_model_name_index,
+        build_user_model_dir,
+        cleanup_empty_parent_directories,
+        infer_visibility_from_path,
+        iter_model_file_paths,
+        move_model_assets,
+        resolve_model_asset_paths,
+        resolve_model_file_path,
+        resolve_unique_model_targets as resolve_unique_model_storage_targets,
+    )
     from model_service import ModelService
     from schemas import (
         AdminConsoleData,
@@ -182,10 +210,14 @@ router = APIRouter()
 model_service = ModelService()
 ai_advice_service = AiAdviceService()
 auth_store = AuthStore(settings.auth_db_path, settings.auth_session_hours)
+knowledge_store = KnowledgeStore(settings.knowledge_db_path)
+knowledge_base_service = KnowledgeBaseService(knowledge_store, ai_advice_service)
 TRAIN_PROGRESS_PREFIX = "__TRAIN_PROGRESS__"
 TRAINING_TASKS: Dict[str, Dict[str, object]] = {}
 TRAINING_TASKS_LOCK = threading.Lock()
 ACTIVE_TRAINING_TASK_ID: Optional[str] = None
+CLASS_ADVICE_GENERATION_TASKS: set[Tuple[str, str]] = set()
+CLASS_ADVICE_GENERATION_LOCK = threading.Lock()
 
 ANNOTATION_CLASS_TEMPLATE_SPECS = (
     {
@@ -284,110 +316,20 @@ def parse_timestamp(value: object) -> Optional[datetime]:
         return None
 
 
-def build_cached_advice_detail(record: Dict[str, object]) -> Optional[str]:
-    parts = ["知识库缓存"]
-    original_source = str(record.get("source") or "").strip()
-    if original_source:
-        parts.append(f"原始生成：{original_source}")
-    generated_at = parse_timestamp(record.get("updated_at") or record.get("created_at"))
-    if generated_at:
-        parts.append(f"更新时间：{generated_at.astimezone().isoformat(timespec='seconds')}")
-    original_detail = str(record.get("detail") or "").strip()
-    if original_detail:
-        parts.append(original_detail)
-    return "；".join(part for part in parts if part) or None
-
-
-def to_class_advice_data(record: Dict[str, object]) -> ClassAdviceData:
-    generated_at = parse_timestamp(record.get("updated_at") or record.get("created_at"))
-    return ClassAdviceData(
-        class_name=str(record.get("class_name") or ""),
-        summary=str(record.get("summary") or ""),
-        advice=[str(item).strip() for item in record.get("advice", []) if str(item).strip()],
-        source="knowledge-base",
-        detail=build_cached_advice_detail(record),
-        generated_at=generated_at.astimezone().isoformat(timespec="seconds") if generated_at else None,
-    )
-
-
-def to_ai_advice_data(payload: Dict[str, object], disease_label: str) -> AiAdviceData:
-    return AiAdviceData(
-        disease_label=str(payload.get("disease_label") or disease_label or "No detection"),
-        summary=str(payload.get("summary") or ""),
-        advice=[str(item).strip() for item in payload.get("advice", []) if str(item).strip()],
-        source=str(payload.get("source") or "builtin"),
-        detail=str(payload.get("detail") or "").strip() or None,
-    )
-
-
-def build_cached_ai_advice(record: Dict[str, object], disease_label: str) -> AiAdviceData:
-    return AiAdviceData(
-        disease_label=str(disease_label or record.get("class_name") or "No detection"),
-        summary=str(record.get("summary") or ""),
-        advice=[str(item).strip() for item in record.get("advice", []) if str(item).strip()],
-        source="knowledge-base",
-        detail=build_cached_advice_detail(record),
-    )
-
-
-def lookup_cached_class_advice(disease_label: str, dataset_name: Optional[str] = None) -> Optional[Dict[str, object]]:
-    safe_label = str(disease_label or "").strip()
-    if not safe_label or safe_label == "No detection":
-        return None
-    if dataset_name:
-        cached = auth_store.get_class_advice(dataset_name, safe_label)
-        if cached:
-            return cached
-    return auth_store.get_latest_class_advice(safe_label)
-
-
 def ensure_annotation_class_ai_advice(
     dataset_name: str,
     class_name: str,
     current_user: Dict[str, object],
 ) -> ClassAdviceData:
-    cached = auth_store.get_class_advice(dataset_name, class_name)
-    if cached:
-        return to_class_advice_data(cached)
-
-    inherited = auth_store.get_latest_class_advice(class_name)
-    if inherited:
-        auth_store.upsert_class_advice(
-            dataset_name=dataset_name,
-            class_name=class_name,
-            summary=str(inherited.get("summary") or ""),
-            advice=[str(item).strip() for item in inherited.get("advice", []) if str(item).strip()],
-            source=str(inherited.get("source") or "builtin"),
-            detail=str(inherited.get("detail") or "").strip() or None,
-            generated_by_user_id=int(current_user["id"]),
-        )
-        copied = auth_store.get_class_advice(dataset_name, class_name)
-        if copied:
-            return to_class_advice_data(copied)
-
-    generated_payload = ai_advice_service.generate_class_knowledge(class_name)
-    auth_store.upsert_class_advice(
-        dataset_name=dataset_name,
-        class_name=class_name,
-        summary=str(generated_payload.get("summary") or ""),
-        advice=[str(item).strip() for item in generated_payload.get("advice", []) if str(item).strip()],
-        source=str(generated_payload.get("source") or "builtin"),
-        detail=str(generated_payload.get("detail") or "").strip() or None,
-        generated_by_user_id=int(current_user["id"]),
-    )
-    stored = auth_store.get_class_advice(dataset_name, class_name)
-    if not stored:
-        raise RuntimeError(f"类别建议缓存失败：{class_name}")
-    return to_class_advice_data(stored)
+    return knowledge_base_service.ensure_annotation_class_advice(dataset_name, class_name, current_user)
 
 
-def build_dataset_class_advices(dataset_name: str, class_names: List[str]) -> List[ClassAdviceData]:
-    advice_items: List[ClassAdviceData] = []
-    for class_name in class_names:
-        cached = auth_store.get_class_advice(dataset_name, class_name) or auth_store.get_latest_class_advice(class_name)
-        if cached:
-            advice_items.append(to_class_advice_data(cached))
-    return advice_items
+def build_dataset_class_advices(
+    dataset_name: str,
+    class_names: List[str],
+    current_user: Optional[Dict[str, object]] = None,
+) -> List[ClassAdviceData]:
+    return knowledge_base_service.build_dataset_class_advices(dataset_name, class_names, current_user=current_user)
 
 
 def generate_ai_advice(
@@ -398,18 +340,14 @@ def generate_ai_advice(
     image_content_type: Optional[str] = None,
     dataset_name: Optional[str] = None,
 ) -> AiAdviceData:
-    cached = lookup_cached_class_advice(disease_label, dataset_name=dataset_name)
-    if cached:
-        return build_cached_ai_advice(cached, disease_label)
-
-    payload = ai_advice_service.generate(
+    return knowledge_base_service.generate_ai_advice(
         disease_label=disease_label,
         confidence=confidence,
-        top_predictions=top_predictions or [],
+        top_predictions=top_predictions,
         image_bytes=image_bytes,
         image_content_type=image_content_type,
+        dataset_name=dataset_name,
     )
-    return to_ai_advice_data(payload, disease_label)
 
 
 def user_is_admin(user: Dict[str, object]) -> bool:
@@ -462,15 +400,120 @@ def sync_annotation_dataset_registry() -> None:
             auth_store.ensure_dataset_access_entry(path.name, int(admin_user["id"]), is_public=False)
 
 
+def select_canonical_model_path(
+    models_dir: Path,
+    candidate_paths: List[Path],
+    model_owner: Optional[Dict[str, object]],
+) -> Path:
+    if not candidate_paths:
+        raise RuntimeError("候选模型路径不能为空。")
+    if not model_owner:
+        return candidate_paths[0]
+
+    expected_owner = str(model_owner.get("owner_username") or "").strip()
+    expected_visibility = bool(model_owner.get("is_public"))
+    for path in candidate_paths:
+        inferred_owner_username, inferred_is_public = infer_visibility_from_path(models_dir, path)
+        if (
+            inferred_owner_username
+            and inferred_owner_username == expected_owner
+            and inferred_is_public is not None
+            and bool(inferred_is_public) == expected_visibility
+        ):
+            return path
+    return candidate_paths[0]
+
+
+def normalize_duplicate_model_assets(models_dir: Path, admin_user: Dict[str, object]) -> None:
+    grouped_paths: Dict[str, List[Path]] = {}
+    for path in iter_model_file_paths(models_dir):
+        grouped_paths.setdefault(path.name, []).append(path)
+
+    for model_name, candidate_paths in grouped_paths.items():
+        if len(candidate_paths) < 2:
+            continue
+
+        registered_owner = auth_store.get_model_owner(model_name)
+        canonical_path = select_canonical_model_path(models_dir, candidate_paths, registered_owner)
+
+        for path in candidate_paths:
+            if path == canonical_path:
+                continue
+
+            inferred_owner_username, inferred_is_public = infer_visibility_from_path(models_dir, path)
+            inferred_owner = auth_store.get_user_by_username(inferred_owner_username) if inferred_owner_username else None
+            owner_user = inferred_owner or admin_user
+            is_public = True if inferred_is_public is None else bool(inferred_is_public)
+            desired_stem = safe_model_stem(Path(model_name).stem, "uploaded_model")
+            new_name, target_path, _, _ = resolve_unique_model_targets(
+                models_dir,
+                desired_stem,
+                str(owner_user.get("username") or ""),
+                is_public,
+            )
+            move_model_assets(path, target_path)
+            cleanup_empty_parent_directories(path.parent, models_dir)
+            auth_store.ensure_model_owner(
+                new_name,
+                int(owner_user["id"]),
+                is_public=is_public,
+                overwrite_existing=False,
+            )
+
+
 def sync_model_registry() -> None:
     models_dir = Path(settings.models_dir)
     models_dir.mkdir(parents=True, exist_ok=True)
     admin_user = auth_store.get_primary_admin_user()
     if not admin_user:
         return
-    for path in models_dir.glob("*.onnx"):
-        if path.is_file() and path.stat().st_size > 0:
-            auth_store.ensure_model_owner(path.name, int(admin_user["id"]), is_public=True)
+    normalize_duplicate_model_assets(models_dir, admin_user)
+    for path in build_model_name_index(models_dir).values():
+        model_owner = auth_store.get_model_owner(path.name)
+        if not model_owner:
+            inferred_owner_username, inferred_is_public = infer_visibility_from_path(models_dir, path)
+            inferred_owner = auth_store.get_user_by_username(inferred_owner_username) if inferred_owner_username else None
+            owner_user = inferred_owner or admin_user
+            auth_store.ensure_model_owner(
+                path.name,
+                int(owner_user["id"]),
+                is_public=True if inferred_is_public is None else bool(inferred_is_public),
+                overwrite_existing=False,
+            )
+            model_owner = auth_store.get_model_owner(path.name)
+        if model_owner:
+            ensure_model_storage_alignment(path.name, model_owner)
+
+
+def ensure_model_storage_alignment(model_name: str, model_owner: Dict[str, object]) -> Optional[Path]:
+    models_dir = Path(settings.models_dir)
+    current_path = resolve_model_file_path(models_dir, model_name)
+    if current_path is None:
+        return None
+
+    target_dir = build_user_model_dir(
+        models_dir,
+        str(model_owner.get("owner_username") or ""),
+        bool(model_owner.get("is_public")),
+    )
+    target_path = target_dir / Path(model_name).name
+    if current_path.resolve() == target_path.resolve():
+        return current_path
+
+    if target_path.exists() and target_path.is_file():
+        for candidate in (
+            current_path,
+            current_path.with_suffix(".labels.json"),
+            current_path.with_suffix(".meta.json"),
+        ):
+            if candidate.exists():
+                candidate.unlink()
+        cleanup_empty_parent_directories(current_path.parent, models_dir)
+        return target_path
+
+    move_model_assets(current_path, target_path)
+    cleanup_empty_parent_directories(current_path.parent, models_dir)
+    return target_path
 
 
 def user_owns_asset(asset_owner: Optional[Dict[str, object]], current_user: Dict[str, object]) -> bool:
@@ -535,6 +578,7 @@ def build_model_access_item(model_name: str, current_user: Dict[str, object]) ->
         is_active = preferred_model == model_name
     return ModelAccessItem(
         name=model_name,
+        display_name=str(model_owner.get("display_name") or model_name) if model_owner else model_name,
         is_active=is_active,
         is_public=bool(model_owner and model_owner.get("is_public")),
         is_official=bool(model_owner and str(model_owner.get("owner_role") or "") == "admin"),
@@ -542,6 +586,16 @@ def build_model_access_item(model_name: str, current_user: Dict[str, object]) ->
         owner_username=str(model_owner.get("owner_username")) if model_owner and model_owner.get("owner_username") else None,
         owner_display_name=str(model_owner.get("owner_display_name")) if model_owner and model_owner.get("owner_display_name") else None,
     )
+
+
+def get_model_display_name(model_name: Optional[str]) -> str:
+    normalized_name = Path(model_name or "").name
+    if not normalized_name:
+        return ""
+    model_owner = auth_store.get_model_owner(normalized_name)
+    if model_owner and model_owner.get("display_name"):
+        return str(model_owner["display_name"])
+    return normalized_name
 
 
 def get_default_dataset_name_for_user(user: Dict[str, object]) -> str:
@@ -556,6 +610,10 @@ def raise_dataset_not_found(dataset_key: str) -> None:
 
 def raise_dataset_name_unavailable() -> None:
     raise RuntimeError("当前数据集名称不可用，请更换一个新名称。")
+
+
+def raise_dataset_write_forbidden(dataset_key: str) -> None:
+    raise RuntimeError(f"当前数据集不可写：{dataset_key}。请切换到你自己的数据集，或先新建一个可写数据集。")
 
 
 def ensure_dataset_access(dataset_name: Optional[str], current_user: Dict[str, object], allow_auto_create: bool = False) -> str:
@@ -590,7 +648,7 @@ def ensure_dataset_write_access(dataset_name: Optional[str], current_user: Dict[
     if owner:
         if can_write_dataset(owner, current_user):
             return dataset_key
-        raise_dataset_not_found(dataset_key)
+        raise_dataset_write_forbidden(dataset_key)
 
     if user_is_admin(current_user) and structure["dataset_dir"].exists():
         auth_store.ensure_dataset_access_entry(dataset_key, int(current_user["id"]), is_public=False)
@@ -604,26 +662,11 @@ def ensure_dataset_write_access(dataset_name: Optional[str], current_user: Dict[
 
 def list_accessible_model_names(current_user: Dict[str, object]) -> List[str]:
     sync_model_registry()
-    available_models = get_release_visible_model_names(model_service.available_models())
+    available_models = model_service.available_models()
     if user_is_admin(current_user):
         return available_models
     accessible_models = set(auth_store.list_accessible_model_names_for_user(int(current_user["id"])))
     return [model_name for model_name in available_models if model_name in accessible_models]
-
-
-def get_release_visible_model_names(model_names: List[str]) -> List[str]:
-    normalized_names = sorted({Path(model_name).name for model_name in model_names if model_name})
-    best_names: List[str] = []
-    if "best.onnx" in normalized_names:
-        best_names.append("best.onnx")
-    best_names.extend([
-        model_name
-        for model_name in normalized_names
-        if model_name != "best.onnx" and re.fullmatch(r"best(?:\(\d+\))?\.onnx", model_name, flags=re.IGNORECASE)
-    ])
-    if best_names:
-        return best_names[:2]
-    return normalized_names[:2]
 
 
 def get_preferred_model_name_for_user(current_user: Dict[str, object], accessible_models: Optional[List[str]] = None) -> Optional[str]:
@@ -635,9 +678,21 @@ def get_preferred_model_name_for_user(current_user: Dict[str, object], accessibl
     return model_names[0]
 
 
+def get_current_model_name_for_user(
+    current_user: Dict[str, object],
+    accessible_models: Optional[List[str]] = None,
+) -> Optional[str]:
+    model_names = accessible_models if accessible_models is not None else list_accessible_model_names(current_user)
+    if not model_names:
+        return None
+    if model_service.current_model_name in model_names:
+        return model_service.current_model_name
+    return None
+
+
 def ensure_model_access(model_name: str, current_user: Dict[str, object]) -> str:
-    sync_model_registry()
     normalized_name = Path(model_name or "").name
+    sync_model_registry()
     if normalized_name not in model_service.available_models():
         raise HTTPException(status_code=404, detail=f"模型不存在：{normalized_name}")
 
@@ -647,9 +702,64 @@ def ensure_model_access(model_name: str, current_user: Dict[str, object]) -> str
     return normalized_name
 
 
-def resolve_predict_model_name(requested_model_name: Optional[str], current_user: Dict[str, object]) -> str:
+def resolve_registered_model_path(model_name: str, model_owner: Optional[Dict[str, object]]) -> Optional[Path]:
+    normalized_name = Path(model_name or "").name
+    if not normalized_name:
+        return None
+
+    models_dir = Path(settings.models_dir)
+    candidate_paths: List[Path] = []
+    if model_owner:
+        candidate_paths.append(
+            build_user_model_dir(
+                models_dir,
+                str(model_owner.get("owner_username") or ""),
+                bool(model_owner.get("is_public")),
+            ) / normalized_name
+        )
+    candidate_paths.append(models_dir / normalized_name)
+
+    for candidate in candidate_paths:
+        if candidate.exists() and candidate.is_file():
+            return candidate
+    return None
+
+
+def ensure_model_access_fast(model_name: str, current_user: Dict[str, object]) -> str:
+    normalized_name = Path(model_name or "").name
+    if not normalized_name:
+        raise HTTPException(status_code=404, detail="模型不存在。")
+
+    model_owner = auth_store.get_model_owner(normalized_name)
+    if model_owner and not can_read_model(model_owner, current_user):
+        raise HTTPException(status_code=403, detail=f"你没有权限访问模型：{normalized_name}")
+    if model_owner and resolve_registered_model_path(normalized_name, model_owner) is not None:
+        return normalized_name
+
+    sync_model_registry()
+    model_owner = auth_store.get_model_owner(normalized_name)
+    if model_owner and not can_read_model(model_owner, current_user):
+        raise HTTPException(status_code=403, detail=f"你没有权限访问模型：{normalized_name}")
+    resolved_model_path = resolve_registered_model_path(normalized_name, model_owner)
+    if resolved_model_path is None:
+        resolved_model_path = resolve_model_file_path(Path(settings.models_dir), normalized_name)
+    if resolved_model_path is not None and can_read_model(model_owner, current_user):
+        return normalized_name
+    if resolved_model_path is not None:
+        raise HTTPException(status_code=403, detail=f"你没有权限访问模型：{normalized_name}")
+    raise HTTPException(status_code=404, detail=f"模型不存在：{normalized_name}")
+
+
+def resolve_predict_model_name(
+    requested_model_name: Optional[str],
+    current_user: Dict[str, object],
+    *,
+    use_registry_sync: bool = True,
+) -> str:
     if requested_model_name:
-        return ensure_model_access(requested_model_name, current_user)
+        if use_registry_sync:
+            return ensure_model_access(requested_model_name, current_user)
+        return ensure_model_access_fast(requested_model_name, current_user)
 
     preferred_model = get_preferred_model_name_for_user(current_user)
     if preferred_model:
@@ -752,12 +862,17 @@ def run_training_command(
     command: List[str],
     progress_callback: Optional[Callable[[Dict[str, object]], None]] = None,
 ) -> None:
+    process_env = os.environ.copy()
+    process_env.setdefault("PYTHONIOENCODING", "utf-8")
     process = subprocess.Popen(
         command,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         bufsize=1,
+        env=process_env,
     )
     output_tail: Deque[str] = deque(maxlen=40)
 
@@ -1003,6 +1118,62 @@ def normalize_annotation_class_name(name: str) -> str:
     return normalized
 
 
+def schedule_annotation_class_ai_advice_generation(
+    dataset_name: str,
+    class_name: str,
+    current_user: Dict[str, object],
+) -> bool:
+    dataset_key = safe_annotation_dataset_name(dataset_name)
+    normalized_class_name = normalize_annotation_class_name(class_name)
+    task_key = (dataset_key, normalized_class_name)
+
+    with CLASS_ADVICE_GENERATION_LOCK:
+        if task_key in CLASS_ADVICE_GENERATION_TASKS:
+            return False
+        CLASS_ADVICE_GENERATION_TASKS.add(task_key)
+
+    worker_user = {"id": int(current_user["id"])} if current_user.get("id") is not None else dict(current_user)
+
+    def worker() -> None:
+        try:
+            knowledge_base_service.ensure_annotation_class_advice(dataset_key, normalized_class_name, worker_user)
+        except Exception:
+            # Advice generation is best-effort and should never block the main annotation workflow.
+            pass
+        finally:
+            with CLASS_ADVICE_GENERATION_LOCK:
+                CLASS_ADVICE_GENERATION_TASKS.discard(task_key)
+
+    thread = threading.Thread(
+        target=worker,
+        name=f"class-advice-{dataset_key}-{normalized_class_name}",
+        daemon=True,
+    )
+    thread.start()
+    return True
+
+
+def schedule_missing_annotation_class_advices(
+    dataset_name: str,
+    class_names: List[str],
+    current_user: Dict[str, object],
+    existing_advices: Optional[List[ClassAdviceData]] = None,
+) -> None:
+    ready_names = {
+        normalize_annotation_class_name(item.class_name)
+        for item in (existing_advices or [])
+        if str(item.class_name or "").strip()
+    }
+    for raw_class_name in class_names:
+        class_name = str(raw_class_name or "").strip()
+        if not class_name:
+            continue
+        normalized_class_name = normalize_annotation_class_name(class_name)
+        if normalized_class_name in ready_names:
+            continue
+        schedule_annotation_class_ai_advice_generation(dataset_name, normalized_class_name, current_user)
+
+
 def build_annotation_dataset_structure(dataset_key: str, dataset_dir: Path) -> Dict[str, Path]:
     return {
         "dataset_key": Path(dataset_key),
@@ -1164,6 +1335,7 @@ def build_annotation_classes_response(
     source_images = build_annotation_source_image_items(structure)
     train_pair_count = len(collect_image_label_pairs(structure["images_train"], structure["labels_train"]))
     val_pair_count = len(collect_image_label_pairs(structure["images_val"], structure["labels_val"]))
+    class_advices = build_dataset_class_advices(selected_dataset, classes, current_user=current_user)
     return AnnotationClassesResponse(
         success=True,
         message=message,
@@ -1173,7 +1345,7 @@ def build_annotation_classes_response(
             available_dataset_items=available_dataset_items,
             classes=classes,
             class_templates=class_templates,
-            class_advices=build_dataset_class_advices(selected_dataset, classes),
+            class_advices=class_advices,
             dataset_dir=str(structure["dataset_dir"]),
             images_dir=str(structure["images_raw"]),
             labels_dir=str(structure["labels_raw"]),
@@ -1264,6 +1436,7 @@ def delete_annotation_dataset(dataset_name: str, current_user: Dict[str, object]
     elif structure["dataset_dir"].exists():
         structure["dataset_dir"].unlink()
 
+    knowledge_base_service.delete_dataset_entries(dataset_key)
     auth_store.delete_dataset_owner(dataset_key)
     remaining = list_annotation_datasets(current_user)
     return remaining[0] if remaining else ""
@@ -1327,7 +1500,7 @@ def delete_annotation_class(dataset_name: Optional[str], current_user: Dict[str,
     rewrite_labels_after_class_delete(structure, deleted_index)
     next_classes = [item for index, item in enumerate(classes) if index != deleted_index]
     ensure_annotation_dataset_structure(dataset_key, next_classes)
-    auth_store.delete_class_advice(dataset_key, normalized_name)
+    knowledge_base_service.delete_annotation_class_advice(dataset_key, normalized_name)
     return dataset_key, normalized_name
 
 
@@ -1359,21 +1532,30 @@ def safe_model_stem(name: Optional[str], fallback: str) -> str:
     return fallback_stem or "trained_model"
 
 
-def resolve_unique_model_targets(models_dir: Path, desired_stem: str) -> Tuple[str, Path, Path, Path]:
-    stem = desired_stem
-    onnx_path = models_dir / f"{stem}.onnx"
+def resolve_unique_model_display_name(original_filename: str) -> str:
+    display_path = Path(Path(original_filename or "").name)
+    display_stem = display_path.stem.strip() or "uploaded_model"
+    display_suffix = display_path.suffix or ".onnx"
+    existing_names = {
+        str(item.get("display_name") or item.get("model_name") or "").strip().lower()
+        for item in auth_store.list_all_models()
+        if str(item.get("display_name") or item.get("model_name") or "").strip()
+    }
+    candidate = f"{display_stem}{display_suffix}"
     counter = 1
-    while onnx_path.exists():
-        stem = f"{desired_stem}_{counter}"
-        onnx_path = models_dir / f"{stem}.onnx"
+    while candidate.lower() in existing_names:
+        candidate = f"{display_stem}{counter}{display_suffix}"
         counter += 1
+    return candidate
 
-    return (
-        stem,
-        onnx_path,
-        models_dir / f"{stem}.labels.json",
-        models_dir / f"{stem}.meta.json",
-    )
+
+def resolve_unique_model_targets(
+    models_dir: Path,
+    desired_stem: str,
+    owner_username: Optional[str],
+    is_public: bool,
+) -> Tuple[str, Path, Path, Path]:
+    return resolve_unique_model_storage_targets(models_dir, desired_stem, owner_username, is_public)
 
 
 def copy_directory_contents(source_dir: Path, target_dir: Path) -> None:
@@ -1580,8 +1762,8 @@ def build_admin_console_response(current_user: Dict[str, object], message: str =
     sync_model_registry()
     model_records_by_name = {item["model_name"]: item for item in auth_store.list_all_models()}
     dataset_records = auth_store.list_all_datasets()
-    available_models = get_release_visible_model_names(model_service.available_models())
-    current_model = model_service.current_model_name if model_service.current_model_name in available_models else (available_models[0] if available_models else None)
+    available_models = model_service.available_models()
+    current_model = model_service.current_model_name if model_service.current_model_name in available_models else None
     return AdminConsoleResponse(
         success=True,
         message=message,
@@ -1609,14 +1791,17 @@ def build_users_response(current_user: Dict[str, object], message: str = "用户
 
 
 def remove_model_files(model_name: str) -> None:
-    model_path = Path(settings.models_dir) / model_name
+    model_path, labels_path, metadata_path = resolve_model_asset_paths(Path(settings.models_dir), model_name)
+    if model_path is None:
+        return
     for candidate in (
         model_path,
-        model_path.with_suffix(".labels.json"),
-        model_path.with_suffix(".meta.json"),
+        labels_path,
+        metadata_path,
     ):
-        if candidate.exists():
+        if candidate and candidate.exists():
             candidate.unlink()
+    cleanup_empty_parent_directories(model_path.parent, Path(settings.models_dir))
 
 
 def refresh_active_model_after_mutation(preferred_model_name: Optional[str] = None) -> Optional[str]:
@@ -1660,6 +1845,7 @@ def delete_model_asset(model_name: str, current_user: Dict[str, object]) -> str:
         raise RuntimeError(f"模型不存在：{normalized_name}")
     if not can_manage_model(model_owner, current_user):
         raise RuntimeError(f"你没有权限删除模型：{normalized_name}")
+    display_name = str(model_owner.get("display_name") or normalized_name)
 
     remove_model_files(normalized_name)
     auth_store.delete_model_owner(normalized_name)
@@ -1670,7 +1856,7 @@ def delete_model_asset(model_name: str, current_user: Dict[str, object]) -> str:
     if model_service.current_model_name == normalized_name:
         model_service.current_model_name = None
     refresh_active_model_after_mutation()
-    return normalized_name
+    return display_name
 
 
 def upload_model_asset(
@@ -1694,7 +1880,13 @@ def upload_model_asset(
     models_dir.mkdir(parents=True, exist_ok=True)
 
     desired_stem = safe_model_stem(Path(model_filename).stem, "uploaded_model")
-    _, onnx_path, labels_path, metadata_path = resolve_unique_model_targets(models_dir, desired_stem)
+    display_name = resolve_unique_model_display_name(model_filename)
+    model_name, onnx_path, labels_path, metadata_path = resolve_unique_model_targets(
+        models_dir,
+        desired_stem,
+        str(current_user.get("username") or ""),
+        bool(is_public),
+    )
 
     try:
         save_uploaded_file(model_file, onnx_path)
@@ -1707,18 +1899,31 @@ def upload_model_asset(
             path.unlink(missing_ok=True)
         raise
 
-    auth_store.ensure_model_owner(onnx_path.name, int(current_user["id"]), is_public=is_public, overwrite_existing=True)
+    auth_store.ensure_model_owner(
+        model_name,
+        int(current_user["id"]),
+        is_public=is_public,
+        overwrite_existing=True,
+        display_name=display_name,
+    )
+    ensure_model_storage_alignment(
+        model_name,
+        auth_store.get_model_owner(model_name) or {
+            "owner_username": current_user.get("username"),
+            "is_public": is_public,
+        },
+    )
 
     activated = False
     activation_error: Optional[str] = None
     if activate or not model_service.current_model_name:
         try:
-            model_service.set_active_model(onnx_path.name)
+            model_service.set_active_model(model_name)
             activated = True
         except RuntimeError as exc:
             activation_error = str(exc)
 
-    return onnx_path.name, activated, activation_error
+    return model_name, activated, activation_error
 
 
 def delete_user_assets_and_record(user_id: int) -> Dict[str, int]:
@@ -1971,6 +2176,44 @@ def collect_image_label_pairs(images_dir: Path, labels_dir: Path) -> List[Tuple[
     return pairs
 
 
+def sync_raw_sample_into_training_split(
+    structure: Dict[str, Path],
+    raw_image_path: Path,
+    raw_label_path: Path,
+) -> None:
+    train_image_path = structure["images_train"] / raw_image_path.name
+    train_label_path = structure["labels_train"] / raw_label_path.name
+    val_image_path = structure["images_val"] / raw_image_path.name
+    val_label_path = structure["labels_val"] / raw_label_path.name
+
+    train_pairs = collect_image_label_pairs(structure["images_train"], structure["labels_train"])
+    val_pairs = collect_image_label_pairs(structure["images_val"], structure["labels_val"])
+    split_has_pairs = bool(train_pairs or val_pairs)
+
+    copied = False
+    for image_path, label_path in (
+        (train_image_path, train_label_path),
+        (val_image_path, val_label_path),
+    ):
+        if image_path.exists() or label_path.exists():
+            shutil.copy2(raw_image_path, image_path)
+            shutil.copy2(raw_label_path, label_path)
+            copied = True
+
+    if copied:
+        return
+
+    # If a split already exists, add new samples to train by default so they
+    # immediately participate in subsequent training runs.
+    if split_has_pairs:
+        shutil.copy2(raw_image_path, train_image_path)
+        shutil.copy2(raw_label_path, train_label_path)
+        return
+
+    shutil.copy2(raw_image_path, train_image_path)
+    shutil.copy2(raw_label_path, train_label_path)
+
+
 def write_train_val_pairs(
     pairs: List[Tuple[Path, Path]],
     structure: Dict[str, Path],
@@ -2063,7 +2306,16 @@ def run_augment_script(dataset_name: str, structure: Dict[str, Path], copies: in
         "--copies", str(max(1, copies)),
         "--seed", str(seed),
     ]
-    result = subprocess.run(command, capture_output=True, text=True)
+    process_env = os.environ.copy()
+    process_env.setdefault("PYTHONIOENCODING", "utf-8")
+    result = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=process_env,
+    )
     if result.returncode != 0:
         shutil.rmtree(temp_root, ignore_errors=True)
         detail = (result.stderr or result.stdout or "增强脚本执行失败。").strip()
@@ -2197,7 +2449,13 @@ def train_model_and_export(
     models_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     desired_stem = safe_model_stem(requested_model_name, f"{dataset_key}_{stamp}")
-    model_stem, onnx_path, labels_path, metadata_path = resolve_unique_model_targets(models_dir, desired_stem)
+    model_name, onnx_path, labels_path, metadata_path = resolve_unique_model_targets(
+        models_dir,
+        desired_stem,
+        str(current_user.get("username") or ""),
+        user_is_admin(current_user),
+    )
+    model_stem = Path(model_name).stem
 
     training_runs_dir = Path(settings.training_runs_dir)
     training_runs_dir.mkdir(parents=True, exist_ok=True)
@@ -2257,7 +2515,7 @@ def train_model_and_export(
         training_summary, training_advice = build_training_quality_advice(metrics)
 
         auth_store.ensure_model_owner(
-            onnx_path.name,
+            model_name,
             int(current_user["id"]),
             is_public=user_is_admin(current_user),
             overwrite_existing=True,
@@ -2265,15 +2523,15 @@ def train_model_and_export(
 
         try:
             if user_is_admin(current_user):
-                current_model = model_service.set_active_model(onnx_path.name)
+                current_model = model_service.set_active_model(model_name)
             else:
-                current_model = model_service.ensure_model_ready(onnx_path.name)
+                current_model = model_service.ensure_model_ready(model_name)
         except RuntimeError as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
         return ModelTrainData(
             dataset_name=dataset_key,
-            model_name=onnx_path.name,
+            model_name=model_name,
             base_model=base_model,
             epochs=epochs,
             imgsz=imgsz,
@@ -2299,12 +2557,12 @@ def train_model_and_export(
 
 def build_health_response(current_user: Optional[Dict[str, object]] = None) -> HealthResponse:
     sync_model_registry()
-    service_available_models = get_release_visible_model_names(model_service.available_models())
-    service_current_model = model_service.current_model_name if model_service.current_model_name in service_available_models else (service_available_models[0] if service_available_models else None)
+    service_available_models = model_service.available_models()
+    service_current_model = model_service.current_model_name if model_service.current_model_name in service_available_models else None
 
     if current_user:
         available_models = list_accessible_model_names(current_user)
-        current_model = get_preferred_model_name_for_user(current_user, available_models)
+        current_model = get_current_model_name_for_user(current_user, available_models)
         model_error = None
         if not available_models:
             model_error = "当前没有你可访问的模型，请联系管理员上传公开模型或使用你自己的模型。"
@@ -2336,7 +2594,7 @@ def build_health_response(current_user: Optional[Dict[str, object]] = None) -> H
 
 def build_models_response(current_user: Dict[str, object], message: str = "模型列表已就绪") -> ModelsResponse:
     accessible_models = list_accessible_model_names(current_user)
-    current_model = get_preferred_model_name_for_user(current_user, accessible_models)
+    current_model = get_current_model_name_for_user(current_user, accessible_models)
     return ModelsResponse(
         success=True,
         message=message,
@@ -2517,13 +2775,7 @@ def save_annotation_files(
 
     raw_label_path.write_text("\n".join(yolo_lines), encoding="utf-8")
 
-    train_pairs = collect_image_label_pairs(structure["images_train"], structure["labels_train"])
-    val_pairs = collect_image_label_pairs(structure["images_val"], structure["labels_val"])
-    if not train_pairs and not val_pairs:
-        mirror_image_path = structure["images_train"] / raw_image_path.name
-        mirror_label_path = structure["labels_train"] / raw_label_path.name
-        shutil.copy2(raw_image_path, mirror_image_path)
-        shutil.copy2(raw_label_path, mirror_label_path)
+    sync_raw_sample_into_training_split(structure, raw_image_path, raw_label_path)
 
     return AnnotationSaveData(
         dataset_name=dataset_key,
@@ -2686,7 +2938,8 @@ def upload_model(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     owner_label = "官方" if user_is_admin(current_user) else "用户"
     visibility_label = "公开" if is_public else "私有"
-    message = f"已上传{owner_label}模型 {model_name}（{visibility_label}）"
+    model_display_name = get_model_display_name(model_name)
+    message = f"已上传{owner_label}模型 {model_display_name}（{visibility_label}）"
     if activated:
         message += "，并已设为当前模型。"
     elif activation_error:
@@ -2714,7 +2967,8 @@ def admin_upload_model(
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    message = f"已上传模型 {model_name}"
+    model_display_name = get_model_display_name(model_name)
+    message = f"已上传模型 {model_display_name}"
     message += "（公开）" if is_public else "（私有）"
     if activated:
         message += "，并已设为当前模型。"
@@ -2809,6 +3063,36 @@ def admin_select_augmentation_script(
     return build_admin_console_response(current_user, message=f"已切换当前增强算法：{normalized_name}")
 
 
+@router.delete("/admin/augmentations/{script_name}", response_model=AdminConsoleResponse)
+def admin_delete_augmentation_script(
+    script_name: str,
+    current_user: Dict[str, object] = Depends(require_admin),
+) -> AdminConsoleResponse:
+    normalized_name = Path(script_name or "").name
+    if not normalized_name or not normalized_name.lower().endswith(".py"):
+        raise HTTPException(status_code=400, detail="增强算法脚本名无效。")
+
+    script_path = ensure_augmentation_algorithms_dir() / normalized_name
+    if not script_path.exists() or not script_path.is_file():
+        raise HTTPException(status_code=404, detail=f"增强算法脚本不存在：{normalized_name}")
+
+    was_active = (read_active_augmentation_override() or "") == normalized_name
+    metadata_path = script_path.with_suffix(".meta.json")
+    try:
+        script_path.unlink()
+        metadata_path.unlink(missing_ok=True)
+    except OSError as exc:
+        raise HTTPException(status_code=400, detail=f"删除增强算法失败：{normalized_name}") from exc
+
+    if was_active:
+        clear_active_augmentation_override()
+        message = f"已删除增强算法 {normalized_name}，并切回内置增强算法。"
+    else:
+        message = f"已删除增强算法 {normalized_name}。"
+
+    return build_admin_console_response(current_user, message=message)
+
+
 @router.get("/models", response_model=ModelsResponse)
 def list_models(current_user: Dict[str, object] = Depends(get_current_user)) -> ModelsResponse:
     return build_models_response(current_user)
@@ -2821,17 +3105,17 @@ def download_model(
 ) -> FileResponse:
     accessible_model_name = ensure_model_access(model_name, current_user)
 
-    model_path = Path(settings.models_dir) / accessible_model_name
+    model_path, labels_path, metadata_path = resolve_model_asset_paths(Path(settings.models_dir), accessible_model_name)
+    if model_path is None:
+        raise HTTPException(status_code=404, detail=f"模型文件不存在：{accessible_model_name}")
     model_stem = Path(accessible_model_name).stem
     archive_members: List[Tuple[Path, Path]] = [
         (model_path, Path(model_stem) / model_path.name),
     ]
 
-    labels_path = model_path.with_suffix(".labels.json")
-    metadata_path = model_path.with_suffix(".meta.json")
-    if labels_path.exists():
+    if labels_path and labels_path.exists():
         archive_members.append((labels_path, Path(model_stem) / labels_path.name))
-    if metadata_path.exists():
+    if metadata_path and metadata_path.exists():
         archive_members.append((metadata_path, Path(model_stem) / metadata_path.name))
 
     archive_path = create_zip_archive("model_download_", archive_members)
@@ -2865,7 +3149,7 @@ def select_model(
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    return build_models_response(current_user, message=f"已切换当前模型：{selected_model}")
+    return build_models_response(current_user, message=f"已切换当前模型：{get_model_display_name(selected_model)}")
 
 
 @router.post("/models/train", response_model=ModelTrainResponse)
@@ -3107,8 +3391,8 @@ def create_annotation_class(
 ) -> AnnotationClassesResponse:
     try:
         dataset_key, class_name, was_created = append_annotation_class(payload.dataset_name, current_user, payload.class_name)
-        ensure_annotation_class_ai_advice(dataset_key, class_name, current_user)
-        action_text = "类别已添加并写入建议库" if was_created else "类别已存在，建议库已就绪"
+        schedule_annotation_class_ai_advice_generation(dataset_key, class_name, current_user)
+        action_text = "类别已添加，建议正在后台生成" if was_created else "类别已存在，建议正在后台补全"
         return build_annotation_classes_response(current_user, dataset_key, message=f"{action_text}：{class_name}")
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -3213,7 +3497,9 @@ async def predict(
     file: UploadFile = File(...),
     model_name: Optional[str] = Query(default=None, description="Optional model filename override"),
     include_ai_advice: bool = Query(default=True, description="Whether to generate AI advice for this prediction"),
+    dataset_name: Optional[str] = Query(default=None, description="Optional dataset name used for knowledge-base advice lookup"),
     confidence_threshold: Optional[float] = Query(default=None, ge=0.0, le=1.0, description="Optional confidence threshold override"),
+    realtime_mode: bool = Query(default=False, description="Whether to use the low-latency realtime prediction path"),
     current_user: Dict[str, object] = Depends(get_current_user),
 ) -> PredictResponse:
     ensure_supported_uploaded_image(file)
@@ -3223,11 +3509,19 @@ async def predict(
         raise HTTPException(status_code=400, detail="上传的文件为空。")
 
     try:
+        resolved_model_name = resolve_predict_model_name(
+            model_name,
+            current_user,
+            use_registry_sync=not realtime_mode,
+        )
+        include_ai_advice = bool(include_ai_advice and not realtime_mode)
         prediction_started = perf_counter()
-        prediction = model_service.predict(
+        prediction = await run_in_threadpool(
+            model_service.predict,
             image_bytes,
-            model_name=resolve_predict_model_name(model_name, current_user),
-            confidence_threshold=confidence_threshold,
+            resolved_model_name,
+            confidence_threshold,
+            not realtime_mode,
         )
         prediction_ms = int((perf_counter() - prediction_started) * 1000)
     except ValueError as exc:
@@ -3235,16 +3529,22 @@ async def predict(
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
+    knowledge_dataset_name: Optional[str] = None
+    if include_ai_advice and dataset_name:
+        knowledge_dataset_name = ensure_dataset_access(dataset_name, current_user, allow_auto_create=False)
+
     ai_advice = None
     advice_ms = None
     if include_ai_advice:
         advice_started = perf_counter()
-        ai_advice = generate_ai_advice(
-            disease_label=str(prediction.get("predicted_class") or "No detection"),
-            confidence=float(prediction.get("confidence") or 0.0),
-            top_predictions=list(prediction.get("top_predictions") or []),
-            image_bytes=image_bytes,
-            image_content_type=file.content_type,
+        ai_advice = await run_in_threadpool(
+            generate_ai_advice,
+            str(prediction.get("predicted_class") or "No detection"),
+            float(prediction.get("confidence") or 0.0),
+            list(prediction.get("top_predictions") or []),
+            image_bytes,
+            file.content_type,
+            knowledge_dataset_name,
         )
         advice_ms = int((perf_counter() - advice_started) * 1000)
 
@@ -3265,3 +3565,11 @@ async def predict(
             advice_ms=advice_ms,
         ),
     )
+
+
+try:
+    from .routes import build_api_router
+except ImportError:
+    from routes import build_api_router
+
+router = build_api_router()

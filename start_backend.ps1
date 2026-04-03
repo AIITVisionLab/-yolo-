@@ -12,6 +12,9 @@ if (-not (Test-Path $backendDir)) {
 }
 
 $pythonCandidates = @(
+    (Join-Path $projectRoot ".venv-train\Scripts\python.exe"),
+    (Join-Path $backendDir ".venv-train\Scripts\python.exe"),
+    (Join-Path $projectRoot ".backend-venv\Scripts\python.exe"),
     (Join-Path $projectRoot ".venv\Scripts\python.exe"),
     (Join-Path $backendDir ".venv\Scripts\python.exe")
 )
@@ -22,7 +25,7 @@ foreach ($candidate in $pythonCandidates) {
         continue
     }
 
-    & $candidate -c "import uvicorn" *> $null
+    & $candidate -c "import fastapi, uvicorn" *> $null
     if ($LASTEXITCODE -eq 0) {
         $pythonExe = $candidate
         break
@@ -30,6 +33,7 @@ foreach ($candidate in $pythonCandidates) {
 }
 
 if (-not $pythonExe) {
+    $requirementsPath = Join-Path $backendDir "requirements.txt"
     Write-Host "No usable Python environment with uvicorn was found." -ForegroundColor Yellow
     Write-Host "Checked:" -ForegroundColor Yellow
     foreach ($candidate in $pythonCandidates) {
@@ -37,8 +41,9 @@ if (-not $pythonExe) {
     }
     Write-Host ""
     Write-Host "Install dependencies with one of these commands:" -ForegroundColor Cyan
-    Write-Host "  C:\Users\36451\Desktop\plant\.venv\Scripts\python.exe -m pip install -r C:\Users\36451\Desktop\plant\plantbackend\requirements.txt"
-    Write-Host "  C:\Users\36451\Desktop\plant\plantbackend\.venv\Scripts\python.exe -m pip install -r C:\Users\36451\Desktop\plant\plantbackend\requirements.txt"
+    foreach ($candidate in $pythonCandidates) {
+        Write-Host "  $candidate -m pip install -r $requirementsPath" -ForegroundColor Cyan
+    }
     exit 1
 }
 

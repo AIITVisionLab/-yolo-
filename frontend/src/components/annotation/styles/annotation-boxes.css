@@ -1,0 +1,89 @@
+.annotation-stage__overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.annotation-box {
+  position: absolute;
+  overflow: visible;
+  border: 3px solid rgba(23, 108, 73, 0.98);
+  background: rgba(23, 108, 73, 0.12);
+  box-shadow: var(--annotation-box-shadow);
+  pointer-events: none;
+  transition: border-color 0.18s ease, background 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
+}
+
+.annotation-box:hover {
+  background: rgba(23, 108, 73, 0.18);
+  box-shadow: var(--annotation-box-hover-shadow);
+}
+
+.annotation-box.is-active {
+  z-index: 3;
+  border-color: #ffb84d;
+  background: rgba(255, 184, 77, 0.16);
+  box-shadow: var(--annotation-box-active-shadow);
+}
+
+.annotation-box.is-assist {
+  border-color: #d97706;
+  background: rgba(217, 119, 6, 0.12);
+  border-style: dashed;
+}
+
+.annotation-box--draft {
+  z-index: 5;
+  border-color: #0f766e;
+  background: rgba(15, 118, 110, 0.2);
+  border-style: dashed;
+  box-shadow: var(--annotation-box-draft-shadow);
+  pointer-events: none;
+}
+
+.annotation-box__anchor {
+  position: absolute;
+  top: -7px;
+  left: -7px;
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  border: 2px solid rgba(255, 255, 255, 0.95);
+  background: #0f766e;
+  box-shadow: var(--annotation-box-anchor-shadow);
+}
+
+.annotation-box__label {
+  position: absolute;
+  top: -3px;
+  left: -3px;
+  display: inline-flex;
+  align-items: center;
+  max-width: var(--annotation-box-label-max-width);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0.2rem 0.55rem;
+  border-radius: 12px 0 12px 0;
+  background: var(--annotation-box-label-bg);
+  color: #f7fff8;
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: 0.01em;
+  box-shadow: var(--annotation-box-label-shadow);
+  backdrop-filter: blur(6px);
+}
+
+.annotation-box.is-active .annotation-box__label {
+  background: var(--annotation-box-label-active-bg);
+  color: #fff9eb;
+}
+
+.annotation-box.is-assist .annotation-box__label {
+  background: var(--annotation-box-label-assist-bg);
+}

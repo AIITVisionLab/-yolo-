@@ -30,8 +30,13 @@ rsync -a \
   --exclude=".git/" \
   --exclude=".idea/" \
   --exclude=".vscode/" \
+  --exclude=".backend-venv/" \
   --exclude=".codex-artifacts/" \
+  --exclude=".logs/" \
   --exclude=".playwright-cli/" \
+  --exclude=".tmp/" \
+  --exclude=".uv-cache/" \
+  --exclude=".uv-python/" \
   --exclude="__pycache__/" \
   --exclude="*.pyc" \
   --exclude="*.pyo" \
@@ -42,6 +47,9 @@ rsync -a \
   --exclude="backups/" \
   --exclude="releases/" \
   --exclude="runtime/" \
+  --exclude="tmp_remote_8000.html" \
+  --exclude="tmp_video_frames/" \
+  --exclude="tmp_video_frames_9/" \
   --exclude="video_frames/" \
   --exclude="deploy/backend.env" \
   --exclude="frontend/node_modules/" \
@@ -56,7 +64,9 @@ rsync -a \
   --exclude="plantbackend/.venv_linux/" \
   --exclude="plantbackend/.vscode/" \
   --exclude="plantbackend/__pycache__/" \
+  --exclude="plantbackend/active_augmentation_script.txt" \
   --exclude="plantbackend/auth.db" \
+  --exclude="plantbackend/data/" \
   --exclude="plantbackend/plant_auth.db" \
   --exclude="plantbackend/annotation_datasets/" \
   --exclude="plantbackend/annotation_dataset/" \
@@ -65,6 +75,7 @@ rsync -a \
 
 mkdir -p \
   "$STAGE_DIR/plantbackend/annotation_datasets" \
+  "$STAGE_DIR/plantbackend/data" \
   "$STAGE_DIR/plantbackend/training_runs" \
   "$STAGE_DIR/runtime"
 

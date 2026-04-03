@@ -1,4 +1,4 @@
-export const APP_NAME = "PlantOps";
+export const APP_NAME = "植病平台";
 export const APP_TAGLINE = "植物病害识别平台";
 export const AUTH_STORAGE_KEY = "plant_auth_token";
 export const DEFAULT_WORKSPACE = "recognition";

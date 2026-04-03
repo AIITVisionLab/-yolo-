@@ -75,6 +75,28 @@ export async function uploadAdminDataset(token, {
   });
 }
 
+export async function uploadAdminDatasetFolder(token, {
+  datasetName = "",
+  isPublic = true,
+  files = [],
+  relativePaths = [],
+}) {
+  const formData = new FormData();
+  if (datasetName) {
+    formData.append("dataset_name", datasetName);
+  }
+  formData.append("is_public", String(Boolean(isPublic)));
+  Array.from(files).forEach((file, index) => {
+    formData.append("files", file);
+    formData.append("relative_paths", relativePaths[index] || file.webkitRelativePath || file.name || `file_${index}`);
+  });
+  return requestApi("/annotation/datasets/import-folder", {
+    method: "POST",
+    token,
+    body: formData,
+  });
+}
+
 export async function uploadAdminAugmentation(token, {
   scriptFile,
   activate = true,
@@ -116,6 +138,13 @@ export async function selectAdminAugmentation(token, scriptName = "") {
   }
   return requestApi(`/admin/augmentations/select${params.toString() ? `?${params.toString()}` : ""}`, {
     method: "POST",
+    token,
+  });
+}
+
+export async function deleteAdminAugmentation(token, scriptName) {
+  return requestApi(`/admin/augmentations/${encodeURIComponent(scriptName)}`, {
+    method: "DELETE",
     token,
   });
 }

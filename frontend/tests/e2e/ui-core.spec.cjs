@@ -1,5 +1,5 @@
 const { test, expect } = require('@playwright/test');
-const { loginAsAdmin, sampleAnnotationImageFile, sampleImageFile } = require('./helpers.cjs');
+const { FRONTEND_BASE_URL, loginAsAdmin, sampleAnnotationImageFile, sampleImageFile } = require('./helpers.cjs');
 
 test.describe.configure({ mode: 'serial' });
 
@@ -14,32 +14,32 @@ test('ui core flows', async ({ page }) => {
   await expect(page.locator('.recognition-result-card strong').first()).not.toHaveText('--', { timeout: 30000 });
   await expect(page.getByRole('heading', { name: '候选结果', exact: true })).toBeVisible();
   await expect(page.getByRole('heading', { name: '标签统计', exact: true })).toBeVisible();
-  await expect(page.getByRole('heading', { name: '关注度快照', exact: true })).toBeVisible();
   await page.getByRole('button', { name: '热力图', exact: true }).click();
   await expect(page.locator('.recognition-stage__heatmap.is-visible')).toBeVisible();
   await expect(page.getByRole('heading', { name: '智能分析', exact: true })).toBeVisible();
 
   await page.getByRole('button', { name: '送去标注', exact: true }).click();
   await expect(page.locator('.native-workspace--annotation')).toBeVisible();
-  await expect(page.getByText('标注画面')).toBeVisible();
+  await expect(page.getByRole('heading', { name: '标注画面', exact: true })).toBeVisible();
 
-  await page.goto('http://127.0.0.1:5500/?workspace=details', { waitUntil: 'networkidle' });
+  await page.goto(`${FRONTEND_BASE_URL}/?workspace=details`, { waitUntil: 'networkidle' });
   await expect(page.locator('.native-workspace--details')).toBeVisible();
-  await expect(page.getByText('模型资产中心')).toBeVisible();
+  await expect(page.getByRole('heading', { name: '模型资产中心', exact: true })).toBeVisible();
 
-  await page.goto('http://127.0.0.1:5500/?workspace=admin', { waitUntil: 'networkidle' });
+  await page.goto(`${FRONTEND_BASE_URL}/?workspace=admin`, { waitUntil: 'networkidle' });
   await expect(page.locator('.native-workspace--admin')).toBeVisible();
   await expect(page.getByRole('heading', { name: '模型资源', exact: true }).first()).toBeVisible();
-  await page.locator('.workspace-mode-switch__item', { hasText: '平台用户' }).first().click();
+  const boardTabs = page.getByRole('tablist', { name: '平台资源视图' });
+  await boardTabs.locator('.workspace-mode-switch__item', { hasText: '平台用户' }).first().click();
   await expect(page.getByRole('heading', { name: '平台用户', exact: true }).first()).toBeVisible();
-  await page.locator('.workspace-mode-switch__item', { hasText: '增强脚本' }).first().click();
+  await boardTabs.locator('.workspace-mode-switch__item', { hasText: '增强脚本' }).first().click();
   await expect(page.getByRole('heading', { name: '增强算法上架台', exact: true }).first()).toBeVisible();
 });
 
 test('annotation can draw boxes from accessible dataset records', async ({ page }) => {
   await loginAsAdmin(page);
 
-  await page.goto('http://127.0.0.1:5500/?workspace=annotation', { waitUntil: 'networkidle' });
+  await page.goto(`${FRONTEND_BASE_URL}/?workspace=annotation`, { waitUntil: 'networkidle' });
   await expect(page.locator('.native-workspace--annotation')).toBeVisible();
 
   const datasetSelect = page.locator('.annotation-sidebar select').first();
@@ -51,7 +51,10 @@ test('annotation can draw boxes from accessible dataset records', async ({ page 
   await expect(classSelect).not.toHaveValue('');
 
   await page.setInputFiles('input[type="file"][accept="image/*"]', sampleAnnotationImageFile());
-  const stageFrame = page.locator('.annotation-stage--focus .annotation-stage__frame');
+  await page.getByRole('button', { name: /专注标注模式/ }).click();
+  const focusDialog = page.getByRole('dialog', { name: '专注标注模式' });
+  await expect(focusDialog).toBeVisible();
+  const stageFrame = focusDialog.locator('.annotation-stage__frame');
   await expect(stageFrame).toBeVisible();
 
   const box = await stageFrame.boundingBox();
@@ -64,6 +67,6 @@ test('annotation can draw boxes from accessible dataset records', async ({ page 
   await page.mouse.move(box.x + box.width * 0.65, box.y + box.height * 0.6, { steps: 8 });
   await page.mouse.up();
 
-  await expect(page.locator('.annotation-stage--focus .annotation-box')).toHaveCount(1);
-  await expect(page.getByRole('dialog', { name: '专注标注模式' }).getByText('1 个框', { exact: true })).toBeVisible();
+  await expect(focusDialog.locator('.annotation-box')).toHaveCount(1);
+  await expect(focusDialog.locator('.annotation-focus__summary strong', { hasText: '1 个框' })).toBeVisible();
 });

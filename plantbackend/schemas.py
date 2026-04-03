@@ -54,6 +54,7 @@ class ModelsResponse(BaseModel):
 
 class ManagedModelItem(BaseModel):
     name: str
+    display_name: Optional[str] = None
     size_bytes: int
     uploaded_at: Optional[str] = None
     has_labels: bool = False
@@ -68,6 +69,7 @@ class ManagedModelItem(BaseModel):
 
 class ModelAccessItem(BaseModel):
     name: str
+    display_name: Optional[str] = None
     is_active: bool = False
     is_public: bool = False
     is_official: bool = False

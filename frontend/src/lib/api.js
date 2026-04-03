@@ -85,7 +85,3 @@ export async function requestBlob(path, { method = "GET", token = "", body, head
 export function buildApiUrl(path) {
   return joinUrl(getApiBaseUrl(), path);
 }
-
-export function getApiBaseLabel() {
-  return getApiBaseUrl();
-}

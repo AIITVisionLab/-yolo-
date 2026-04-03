@@ -1,0 +1,675 @@
+/* Workspace styles: recognition */
+
+.recognition-stage.is-heatmap {
+  background:
+    radial-gradient(circle at top right, rgba(189, 104, 255, 0.18), transparent 30%),
+    linear-gradient(180deg, rgba(16, 11, 29, 0.98), rgba(22, 14, 38, 0.96));
+}
+
+.recognition-stage__toolbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 14px;
+}
+
+.recognition-stage__modes,
+.recognition-stage__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.recognition-stage__mode {
+  min-height: 36px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(23, 44, 31, 0.1);
+  background: rgba(244, 248, 241, 0.82);
+  color: var(--surface-ink);
+  font-weight: 700;
+}
+
+.recognition-stage__mode.is-active {
+  color: #f7fbf6;
+  background: linear-gradient(142deg, rgba(22, 53, 38, 0.98), rgba(36, 98, 69, 0.96));
+  box-shadow: 0 16px 30px rgba(22, 53, 38, 0.18);
+}
+
+.recognition-stage__overlay.is-hidden {
+  display: none;
+}
+
+.recognition-stage__overlay.is-visible {
+  display: block;
+}
+
+.recognition-stage__heatmap {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  transition: opacity 180ms ease;
+  pointer-events: none;
+}
+
+.recognition-stage__heatmap.is-visible {
+  opacity: 1;
+}
+
+.recognition-box {
+  display: grid;
+  align-content: space-between;
+  padding: 8px;
+  color: #f7fff3;
+}
+
+.recognition-box--live {
+  z-index: 1;
+  backdrop-filter: blur(1px);
+}
+
+.recognition-box em {
+  font-style: normal;
+  font-size: 0.72rem;
+}
+
+.recognition-box strong {
+  justify-self: start;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  background: rgba(12, 26, 19, 0.72);
+}
+
+.recognition-result-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+}
+
+.recognition-result-card {
+  display: grid;
+  gap: 4px;
+  padding: 18px;
+  border-radius: 24px;
+  background: rgba(244, 248, 241, 0.88);
+}
+
+.recognition-result-card--hero {
+  background:
+    radial-gradient(circle at top right, rgba(244, 201, 93, 0.22), transparent 30%),
+    linear-gradient(180deg, rgba(247, 251, 244, 0.98), rgba(239, 245, 236, 0.94));
+}
+
+.recognition-result-card span,
+.recognition-result-card p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.recognition-result-card strong {
+  font-size: 1.2rem;
+  color: var(--surface-ink);
+}
+
+.recognition-list,
+.recognition-advice {
+  display: grid;
+  gap: 12px;
+}
+
+.recognition-dual-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.recognition-collection {
+  align-content: start;
+}
+
+.recognition-list__item p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.recognition-attention {
+  display: grid;
+  gap: 14px;
+}
+
+.recognition-attention__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.recognition-attention__card {
+  position: relative;
+  overflow: hidden;
+  display: grid;
+  gap: 12px;
+  padding: 18px;
+  border-radius: 28px;
+  background:
+    radial-gradient(circle at top right, rgba(198, 166, 255, 0.34), transparent 34%),
+    linear-gradient(180deg, rgba(251, 248, 255, 0.98), rgba(243, 236, 255, 0.96));
+  border: 1px solid rgba(127, 78, 208, 0.16);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72), 0 14px 28px rgba(103, 58, 183, 0.08);
+}
+
+.recognition-attention__card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(115deg, transparent 0%, rgba(255, 255, 255, 0.48) 48%, transparent 76%);
+  transform: translateX(-120%);
+  animation: recognition-attention-sweep 4.2s ease-in-out infinite;
+}
+
+.recognition-attention__card.is-placeholder {
+  background:
+    radial-gradient(circle at top right, rgba(176, 176, 176, 0.18), transparent 34%),
+    linear-gradient(180deg, rgba(248, 249, 251, 0.98), rgba(240, 243, 246, 0.96));
+  border-color: rgba(120, 129, 141, 0.12);
+}
+
+.recognition-attention__top,
+.recognition-attention__layer-head {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+}
+
+.recognition-attention__top span {
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(109, 57, 217, 0.12);
+  color: #6b39d7;
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.recognition-attention__top strong {
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #6d39d9, #c452f0);
+  color: #fff;
+  font-size: 0.78rem;
+  box-shadow: 0 10px 20px rgba(132, 67, 225, 0.22);
+}
+
+.recognition-attention__title,
+.recognition-attention__layers {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 4px;
+}
+
+.recognition-attention__title h4,
+.recognition-attention__title p,
+.recognition-attention__foot {
+  margin: 0;
+}
+
+.recognition-attention__title h4 {
+  font-size: 1rem;
+  color: #2a203b;
+}
+
+.recognition-attention__title p,
+.recognition-attention__foot {
+  color: #726b87;
+}
+
+.recognition-attention__track,
+.recognition-attention__layer-track {
+  position: relative;
+  z-index: 1;
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(108, 57, 217, 0.1), rgba(255, 214, 92, 0.14));
+}
+
+.recognition-attention__track span,
+.recognition-attention__layer-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #6b39d7 0%, #9e44ef 38%, #f06fcc 72%, #ffd95d 100%);
+  box-shadow: 0 0 16px rgba(148, 76, 237, 0.24);
+}
+
+.recognition-attention__layers {
+  gap: 8px;
+}
+
+.recognition-attention__layer {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgba(252, 249, 255, 0.98), rgba(243, 235, 255, 0.9));
+  border: 1px solid rgba(123, 83, 205, 0.1);
+}
+
+.recognition-attention__layer-head span {
+  color: #463463;
+  font-size: 0.74rem;
+  font-weight: 800;
+}
+
+.recognition-attention__layer-head strong {
+  color: #6b39d7;
+  font-size: 0.74rem;
+}
+
+.recognition-advice__meta {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+@keyframes recognition-attention-sweep {
+  0%,
+  100% {
+    transform: translateX(-120%);
+  }
+  50% {
+    transform: translateX(120%);
+  }
+}
+
+.recognition-stage.is-heatmap {
+  background:
+    radial-gradient(circle at top right, rgba(199, 154, 102, 0.16), transparent 24%),
+    linear-gradient(180deg, rgba(14, 22, 18, 0.98), rgba(25, 21, 17, 0.96));
+}
+
+.recognition-stage__mode {
+  min-height: 34px;
+  border-radius: 999px;
+  background: rgba(255, 248, 240, 0.74);
+}
+
+.recognition-stage__mode.is-active {
+  background: linear-gradient(135deg, #395c48 0%, #1e3026 100%);
+  box-shadow: none;
+}
+
+.recognition-attention__card {
+  background:
+    radial-gradient(circle at top right, rgba(187, 138, 87, 0.16), transparent 30%),
+    linear-gradient(180deg, rgba(249, 244, 236, 0.98), rgba(239, 235, 226, 0.96));
+  border: 1px solid rgba(34, 52, 41, 0.08);
+  box-shadow: none;
+}
+
+.recognition-attention__card::before {
+  background: linear-gradient(115deg, transparent 0%, rgba(255, 255, 255, 0.3) 48%, transparent 76%);
+}
+
+.recognition-attention__card.is-placeholder {
+  background:
+    radial-gradient(circle at top right, rgba(120, 129, 141, 0.1), transparent 30%),
+    linear-gradient(180deg, rgba(246, 244, 241, 0.98), rgba(238, 236, 232, 0.96));
+}
+
+.recognition-attention__top span {
+  color: #294334;
+  background: rgba(58, 94, 75, 0.1);
+}
+
+.recognition-attention__top strong {
+  background: linear-gradient(135deg, #395c48 0%, #203126 100%);
+  box-shadow: none;
+}
+
+.recognition-attention__title h4 {
+  color: #223329;
+}
+
+.recognition-attention__title p,
+.recognition-attention__foot,
+.recognition-attention__layer-head span {
+  color: #6b7369;
+}
+
+.recognition-attention__track,
+.recognition-attention__layer-track {
+  background: linear-gradient(90deg, rgba(57, 92, 72, 0.08), rgba(187, 138, 87, 0.16));
+}
+
+.recognition-attention__track span,
+.recognition-attention__layer-track span {
+  background: linear-gradient(90deg, #2f4b3b 0%, #4f725c 58%, #c49563 100%);
+  box-shadow: none;
+}
+
+.recognition-attention__layer {
+  background: rgba(255, 250, 244, 0.82);
+  border: 1px solid rgba(34, 52, 41, 0.08);
+}
+
+.recognition-attention__layer-head strong {
+  color: #315141;
+}
+
+.workspace__main .recognition-attention__top span {
+  color: #28513d;
+  background: rgba(47, 107, 79, 0.1);
+}
+
+.workspace__main .recognition-attention__top strong {
+  background: #2c5b44;
+}
+
+.workspace__main .recognition-attention__track,
+.workspace__main .recognition-attention__layer-track {
+  background: rgba(47, 107, 79, 0.08);
+}
+
+.workspace__main .recognition-detail-shell {
+  display: grid;
+  gap: 18px;
+}
+
+.workspace__main .recognition-result-grid {
+  gap: 10px;
+}
+
+.workspace__main .recognition-result-card {
+  padding: 14px 16px;
+  border-radius: 20px;
+}
+
+.workspace__main .recognition-result-card strong {
+  font-size: 1.08rem;
+}
+
+.workspace__main .recognition-placeholder-card {
+  display: grid;
+  gap: 18px;
+  padding: 20px;
+  border-radius: 24px;
+  background: rgba(248, 251, 248, 0.96);
+  border: 1px solid rgba(41, 67, 50, 0.08);
+}
+
+.workspace__main .recognition-placeholder-card__steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.workspace__main .recognition-placeholder-card__step {
+  display: grid;
+  gap: 6px;
+  padding: 16px;
+  border-radius: 18px;
+  background: #ffffff;
+  border: 1px solid rgba(41, 67, 50, 0.08);
+}
+
+.workspace__main .recognition-placeholder-card__step span,
+.workspace__main .recognition-placeholder-card__step strong {
+  margin: 0;
+}
+
+.workspace__main .recognition-placeholder-card__step span {
+  color: #708070;
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.workspace__main .recognition-placeholder-card__step strong {
+  color: #17231d;
+  font-size: 0.98rem;
+  line-height: 1.45;
+}
+
+.workspace__main .recognition-detail-nav {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  padding: 8px;
+  border-radius: 24px;
+  background: rgba(243, 248, 243, 0.96);
+  border: 1px solid rgba(41, 67, 50, 0.08);
+}
+
+.workspace__main .recognition-detail-nav__item {
+  display: grid;
+  gap: 4px;
+  min-height: 72px;
+  padding: 14px 16px;
+  border: 1px solid transparent;
+  border-radius: 18px;
+  background: transparent;
+  color: #516153;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 160ms ease, border-color 160ms ease, transform 160ms ease, box-shadow 160ms ease;
+}
+
+.workspace__main .recognition-detail-nav__item:hover {
+  background: rgba(255, 255, 255, 0.78);
+  border-color: rgba(47, 107, 79, 0.1);
+}
+
+.workspace__main .recognition-detail-nav__item.is-active {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(241, 247, 241, 0.98));
+  border-color: rgba(47, 107, 79, 0.18);
+  box-shadow: 0 12px 26px rgba(34, 58, 42, 0.08);
+  transform: translateY(-1px);
+}
+
+.workspace__main .recognition-detail-nav__item span,
+.workspace__main .recognition-detail-nav__item strong {
+  margin: 0;
+}
+
+.workspace__main .recognition-detail-nav__item span {
+  color: #708070;
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.workspace__main .recognition-detail-nav__item strong {
+  color: #17231d;
+  font-size: 1rem;
+  line-height: 1.35;
+}
+
+.workspace__main .recognition-control-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.workspace__main .recognition-control-summary__card,
+.workspace__main .recognition-control-card,
+.workspace__main .recognition-control-card__surface {
+  border: 1px solid rgba(41, 67, 50, 0.08);
+  background: rgba(249, 252, 249, 0.94);
+}
+
+.workspace__main .recognition-control-summary__card {
+  display: grid;
+  gap: 4px;
+  padding: 14px 16px;
+  border-radius: 18px;
+}
+
+.workspace__main .recognition-control-summary__card span,
+.workspace__main .recognition-control-summary__card p,
+.workspace__main .recognition-control-nav__item span,
+.workspace__main .recognition-control-card__surface p {
+  margin: 0;
+  color: #708070;
+}
+
+.workspace__main .recognition-control-summary__card span,
+.workspace__main .recognition-control-nav__item span {
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.workspace__main .recognition-control-summary__card strong,
+.workspace__main .recognition-control-nav__item strong,
+.workspace__main .recognition-control-card__head h4,
+.workspace__main .recognition-control-card__surface strong {
+  color: #17231d;
+}
+
+.workspace__main .recognition-control-nav {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  padding: 8px;
+  border-radius: 22px;
+  background: rgba(243, 248, 243, 0.96);
+  border: 1px solid rgba(41, 67, 50, 0.08);
+}
+
+.workspace__main .recognition-control-nav__item {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid transparent;
+  border-radius: 16px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+
+.workspace__main .recognition-control-nav__item:hover {
+  background: rgba(255, 255, 255, 0.76);
+  border-color: rgba(47, 107, 79, 0.1);
+}
+
+.workspace__main .recognition-control-nav__item.is-active {
+  background: #ffffff;
+  border-color: rgba(47, 107, 79, 0.18);
+  box-shadow: 0 10px 24px rgba(34, 58, 42, 0.08);
+  transform: translateY(-1px);
+}
+
+.workspace__main .recognition-control-card {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border-radius: 24px;
+}
+
+.workspace__main .recognition-control-card__head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.workspace__main .recognition-control-card__head h4,
+.workspace__main .recognition-control-card__surface strong {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.workspace__main .recognition-control-card__surface {
+  display: grid;
+  gap: 6px;
+  padding: 15px 16px;
+  border-radius: 18px;
+}
+
+.workspace__main .recognition-hidden-media {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.workspace__main .recognition-advanced {
+  display: grid;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(41, 67, 50, 0.08);
+  background: rgba(255, 255, 255, 0.84);
+}
+
+.workspace__main .recognition-advanced summary {
+  cursor: pointer;
+  color: #264837;
+  font-weight: 700;
+  list-style: none;
+}
+
+.workspace__main .recognition-advanced__grid {
+  display: grid;
+  gap: 12px;
+}
+
+@media (max-width: 1180px) {
+  .workspace__main .recognition-control-summary,
+  .workspace__main .recognition-control-nav,
+  .workspace__main .recognition-placeholder-card__steps,
+  .workspace__main .recognition-detail-nav {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .workspace__main .recognition-control-summary,
+  .workspace__main .recognition-control-nav,
+  .workspace__main .recognition-placeholder-card__steps,
+  .workspace__main .recognition-detail-nav {
+    grid-template-columns: 1fr;
+  }
+
+  .workspace__main .recognition-detail-nav__item {
+    min-height: 64px;
+  }
+}
+
+.recognition-stage__toolbar {
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+.recognition-stage__actions,
+.recognition-stage__modes,
+.native-inline-actions {
+  gap: 10px;
+}
+
+.recognition-box strong {
+  background: rgba(10, 20, 15, 0.72);
+}
+
+.recognition-result-card--hero,
+.ops-card:first-child {
+  background:
+    radial-gradient(circle at top right, rgba(193, 233, 139, 0.16), transparent 28%),
+    radial-gradient(circle at 0% 100%, rgba(191, 135, 80, 0.12), transparent 22%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.76), rgba(250, 247, 241, 0.72));
+}
+

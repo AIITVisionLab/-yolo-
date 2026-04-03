@@ -5,6 +5,11 @@ __pycache__/
 
 .venv/
 .venv-linux/
+.backend-venv/
+.logs/
+.tmp/
+.uv-cache/
+.uv-python/
 venv/
 env/
 plantbackend/.venv/
@@ -28,6 +33,8 @@ Thumbs.db
 *.pid
 
 plantbackend/plant_auth.db
+plantbackend/data/
+plantbackend/active_augmentation_script.txt
 plantbackend/models/
 plantbackend/models/*.onnx
 plantbackend/models/*.labels.json
@@ -35,6 +42,9 @@ plantbackend/models/*.meta.json
 plantbackend/training_runs/
 plantbackend/annotation_datasets/
 plantbackend/annotation_dataset/
+tmp_remote_8000.html
+tmp_video_frames/
+tmp_video_frames_9/
 video_frames/
 yolo_split_augmented.zip
 yolo_split_augmented_with_classes.zip

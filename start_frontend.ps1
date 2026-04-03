@@ -4,6 +4,8 @@ param(
 
 $projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $frontendDir = Join-Path $projectRoot "frontend"
+$lockfilePath = Join-Path $frontendDir "package-lock.json"
+$nodeModulesDir = Join-Path $frontendDir "node_modules"
 
 if (-not (Test-Path $frontendDir)) {
     Write-Error "Frontend directory not found: $frontendDir"
@@ -70,13 +72,24 @@ Write-Host "  $npmExe" -ForegroundColor Green
 if ($selectedPort -ne $Port) {
     Write-Host "Port $Port is unavailable, falling back to $selectedPort." -ForegroundColor Yellow
 }
-Write-Host "Installing frontend dependencies if needed..." -ForegroundColor Green
 
 Push-Location $frontendDir
 try {
-    & $npmExe install
-    if ($LASTEXITCODE -ne 0) {
-        exit $LASTEXITCODE
+    if (-not (Test-Path $nodeModulesDir)) {
+        if (Test-Path $lockfilePath) {
+            Write-Host "node_modules not found, installing dependencies with npm ci..." -ForegroundColor Green
+            & $npmExe ci
+        }
+        else {
+            Write-Host "node_modules not found, installing dependencies with npm install..." -ForegroundColor Green
+            & $npmExe install
+        }
+        if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+        }
+    }
+    else {
+        Write-Host "Using existing frontend dependencies from $nodeModulesDir" -ForegroundColor Green
     }
 
     Write-Host "Starting Vite frontend on http://127.0.0.1:$selectedPort" -ForegroundColor Green

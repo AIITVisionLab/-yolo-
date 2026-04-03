@@ -164,6 +164,7 @@ class Settings:
         _read_str("ANNOTATION_DATASETS_ROOT", _backend_path("annotation_datasets"))
     )
     auth_db_path: str = _resolve_backend_path(_read_str("AUTH_DB_PATH", _backend_path("plant_auth.db")))
+    knowledge_db_path: str = _resolve_backend_path(_read_str("KNOWLEDGE_DB_PATH", _backend_path("data", "knowledge_base.db")))
     auth_session_hours: int = _read_int("AUTH_SESSION_HOURS", 168)
     default_annotation_dataset_name: str = _read_str("DEFAULT_ANNOTATION_DATASET_NAME", "default")
 

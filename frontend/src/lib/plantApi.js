@@ -13,6 +13,8 @@ export async function fetchModels(token, signal) {
 export async function predictImage(token, file, modelName = "", signal, {
   includeAiAdvice = true,
   confidenceThreshold = null,
+  datasetName = "",
+  realtimeMode = false,
 } = {}) {
   const formData = new FormData();
   formData.append("file", file);
@@ -23,6 +25,12 @@ export async function predictImage(token, file, modelName = "", signal, {
   params.set("include_ai_advice", String(Boolean(includeAiAdvice)));
   if (typeof confidenceThreshold === "number" && Number.isFinite(confidenceThreshold)) {
     params.set("confidence_threshold", String(confidenceThreshold));
+  }
+  if (datasetName) {
+    params.set("dataset_name", datasetName);
+  }
+  if (realtimeMode) {
+    params.set("realtime_mode", "true");
   }
   return requestApi(`/predict${params.toString() ? `?${params.toString()}` : ""}`, {
     method: "POST",

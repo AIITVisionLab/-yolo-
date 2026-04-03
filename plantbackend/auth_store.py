@@ -2,7 +2,6 @@
 
 import hashlib
 import hmac
-import json
 import os
 import re
 import secrets
@@ -46,6 +45,12 @@ def normalize_display_name(display_name: Optional[str], fallback_username: str) 
     raw = re.sub(r"\s+", " ", str(display_name or "").strip()).strip()
     return raw[:48] if raw else fallback_username
 
+
+def normalize_asset_display_name(display_name: Optional[str], fallback_name: str) -> str:
+    raw = str(display_name or "").strip()
+    if not raw:
+        return str(fallback_name or "").strip() or "unnamed"
+    return raw[:255]
 
 class AuthStore:
     def __init__(self, db_path: str, session_hours: int = 168) -> None:
@@ -94,38 +99,29 @@ class AuthStore:
 
                 CREATE TABLE IF NOT EXISTS model_ownership (
                     model_name TEXT PRIMARY KEY,
+                    display_name TEXT,
                     owner_user_id INTEGER NOT NULL,
                     is_public INTEGER NOT NULL DEFAULT 0,
                     created_at TEXT NOT NULL,
                     FOREIGN KEY(owner_user_id) REFERENCES users(id) ON DELETE CASCADE
                 );
 
-                CREATE TABLE IF NOT EXISTS class_advice_cache (
-                    dataset_name TEXT NOT NULL,
-                    class_name TEXT NOT NULL,
-                    summary TEXT NOT NULL,
-                    advice_json TEXT NOT NULL,
-                    source TEXT NOT NULL,
-                    detail TEXT,
-                    generated_by_user_id INTEGER,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    PRIMARY KEY (dataset_name, class_name),
-                    FOREIGN KEY(generated_by_user_id) REFERENCES users(id) ON DELETE SET NULL
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_class_advice_cache_class_name
-                ON class_advice_cache(class_name);
                 """
             )
             self._ensure_column(conn, "users", "is_disabled", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(conn, "users", "is_flagged", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(conn, "dataset_ownership", "is_public", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(conn, "model_ownership", "is_public", "INTEGER NOT NULL DEFAULT 0")
-            self._ensure_column(conn, "class_advice_cache", "detail", "TEXT")
-            self._ensure_column(conn, "class_advice_cache", "generated_by_user_id", "INTEGER")
-            self._ensure_column(conn, "class_advice_cache", "created_at", "TEXT NOT NULL DEFAULT ''")
-            self._ensure_column(conn, "class_advice_cache", "updated_at", "TEXT NOT NULL DEFAULT ''")
+            self._ensure_column(conn, "model_ownership", "display_name", "TEXT")
+            conn.execute(
+                """
+                UPDATE model_ownership
+                SET display_name = model_name
+                WHERE display_name IS NULL OR TRIM(display_name) = ''
+                """
+            )
+            conn.execute("DROP TABLE IF EXISTS class_advice_cache")
+            conn.execute("DROP TABLE IF EXISTS knowledge_base_entries")
 
     def _ensure_column(self, conn: sqlite3.Connection, table_name: str, column_name: str, definition: str) -> None:
         rows = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
@@ -296,6 +292,40 @@ class AuthStore:
             raise RuntimeError("该账号已被管理员封禁，请联系管理员。")
         return self._row_to_user(row)
 
+    def set_user_password(self, username: str, password: str) -> Dict[str, object]:
+        safe_username = normalize_username(username)
+        if len(str(password or "")) < 4:
+            raise RuntimeError("密码至少需要 4 个字符。")
+
+        password_hash = self._hash_password(password)
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT id
+                FROM users
+                WHERE username = ?
+                """,
+                (safe_username,),
+            ).fetchone()
+            if not row:
+                raise RuntimeError(f"用户不存在：{safe_username}")
+
+            user_id = int(row["id"])
+            conn.execute(
+                """
+                UPDATE users
+                SET password_hash = ?
+                WHERE id = ?
+                """,
+                (password_hash, user_id),
+            )
+            conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+
+        updated = self.get_user_by_username(safe_username)
+        if not updated:
+            raise RuntimeError("密码重置后未能读取用户信息。")
+        return updated
+
     def create_session(self, user_id: int) -> str:
         token = secrets.token_urlsafe(32)
         token_hash = self._hash_session_token(token)
@@ -369,9 +399,6 @@ class AuthStore:
 
         return self._row_to_user(row)
 
-    def ensure_dataset_owner(self, dataset_name: str, owner_user_id: int) -> None:
-        self.ensure_dataset_access_entry(dataset_name, owner_user_id, is_public=False, overwrite_existing=False)
-
     def ensure_dataset_access_entry(
         self,
         dataset_name: str,
@@ -429,9 +456,6 @@ class AuthStore:
             "owner_display_name": str(row["owner_display_name"]),
             "owner_role": str(row["owner_role"]),
         }
-
-    def list_dataset_names_for_user(self, user_id: int) -> List[str]:
-        return [item["dataset_name"] for item in self.list_accessible_datasets_for_user(user_id)]
 
     def list_accessible_datasets_for_user(self, user_id: int) -> List[Dict[str, object]]:
         with self._connect() as conn:
@@ -498,158 +522,6 @@ class AuthStore:
     def delete_dataset_owner(self, dataset_name: str) -> None:
         with self._connect() as conn:
             conn.execute("DELETE FROM dataset_ownership WHERE dataset_name = ?", (str(dataset_name),))
-            conn.execute("DELETE FROM class_advice_cache WHERE dataset_name = ?", (str(dataset_name),))
-
-    def upsert_class_advice(
-        self,
-        dataset_name: str,
-        class_name: str,
-        summary: str,
-        advice: List[str],
-        source: str,
-        detail: Optional[str] = None,
-        generated_by_user_id: Optional[int] = None,
-    ) -> None:
-        safe_dataset = str(dataset_name or "").strip()
-        safe_class = str(class_name or "").strip()
-        if not safe_dataset or not safe_class:
-            raise RuntimeError("类别建议写入失败：dataset_name 或 class_name 为空。")
-
-        safe_summary = str(summary or "").strip()
-        safe_source = str(source or "builtin").strip() or "builtin"
-        safe_detail = str(detail or "").strip() or None
-        safe_advice = [str(item).strip() for item in advice if str(item).strip()]
-        if not safe_summary or not safe_advice:
-            raise RuntimeError("类别建议写入失败：summary 或 advice 为空。")
-
-        timestamp = _utc_timestamp()
-        with self._connect() as conn:
-            conn.execute(
-                """
-                INSERT INTO class_advice_cache (
-                    dataset_name,
-                    class_name,
-                    summary,
-                    advice_json,
-                    source,
-                    detail,
-                    generated_by_user_id,
-                    created_at,
-                    updated_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(dataset_name, class_name) DO UPDATE SET
-                    summary = excluded.summary,
-                    advice_json = excluded.advice_json,
-                    source = excluded.source,
-                    detail = excluded.detail,
-                    generated_by_user_id = excluded.generated_by_user_id,
-                    updated_at = excluded.updated_at
-                """,
-                (
-                    safe_dataset,
-                    safe_class,
-                    safe_summary,
-                    json.dumps(safe_advice, ensure_ascii=False),
-                    safe_source,
-                    safe_detail,
-                    int(generated_by_user_id) if generated_by_user_id is not None else None,
-                    timestamp,
-                    timestamp,
-                ),
-            )
-
-    def _row_to_class_advice(self, row: sqlite3.Row) -> Dict[str, object]:
-        try:
-            advice_items = json.loads(str(row["advice_json"] or "[]"))
-        except (TypeError, ValueError, json.JSONDecodeError):
-            advice_items = []
-
-        cleaned_advice = [str(item).strip() for item in advice_items if str(item).strip()]
-        return {
-            "dataset_name": str(row["dataset_name"]),
-            "class_name": str(row["class_name"]),
-            "summary": str(row["summary"]),
-            "advice": cleaned_advice,
-            "source": str(row["source"] or "builtin"),
-            "detail": str(row["detail"] or "").strip() or None,
-            "generated_by_user_id": int(row["generated_by_user_id"]) if row["generated_by_user_id"] is not None else None,
-            "created_at": str(row["created_at"] or ""),
-            "updated_at": str(row["updated_at"] or ""),
-        }
-
-    def get_class_advice(self, dataset_name: str, class_name: str) -> Optional[Dict[str, object]]:
-        with self._connect() as conn:
-            row = conn.execute(
-                """
-                SELECT
-                    dataset_name,
-                    class_name,
-                    summary,
-                    advice_json,
-                    source,
-                    detail,
-                    generated_by_user_id,
-                    created_at,
-                    updated_at
-                FROM class_advice_cache
-                WHERE dataset_name = ? AND class_name = ?
-                """,
-                (str(dataset_name), str(class_name)),
-            ).fetchone()
-        return self._row_to_class_advice(row) if row else None
-
-    def get_latest_class_advice(self, class_name: str) -> Optional[Dict[str, object]]:
-        with self._connect() as conn:
-            row = conn.execute(
-                """
-                SELECT
-                    dataset_name,
-                    class_name,
-                    summary,
-                    advice_json,
-                    source,
-                    detail,
-                    generated_by_user_id,
-                    created_at,
-                    updated_at
-                FROM class_advice_cache
-                WHERE class_name = ?
-                ORDER BY updated_at DESC, created_at DESC
-                LIMIT 1
-                """,
-                (str(class_name),),
-            ).fetchone()
-        return self._row_to_class_advice(row) if row else None
-
-    def list_class_advices_for_dataset(self, dataset_name: str) -> List[Dict[str, object]]:
-        with self._connect() as conn:
-            rows = conn.execute(
-                """
-                SELECT
-                    dataset_name,
-                    class_name,
-                    summary,
-                    advice_json,
-                    source,
-                    detail,
-                    generated_by_user_id,
-                    created_at,
-                    updated_at
-                FROM class_advice_cache
-                WHERE dataset_name = ?
-                ORDER BY class_name
-                """,
-                (str(dataset_name),),
-            ).fetchall()
-        return [self._row_to_class_advice(row) for row in rows]
-
-    def delete_class_advice(self, dataset_name: str, class_name: str) -> None:
-        with self._connect() as conn:
-            conn.execute(
-                "DELETE FROM class_advice_cache WHERE dataset_name = ? AND class_name = ?",
-                (str(dataset_name), str(class_name)),
-            )
 
     def list_datasets_owned_by_user(self, user_id: int) -> List[Dict[str, object]]:
         with self._connect() as conn:
@@ -714,26 +586,33 @@ class AuthStore:
         owner_user_id: int,
         is_public: bool = False,
         overwrite_existing: bool = False,
+        display_name: Optional[str] = None,
     ) -> None:
+        safe_display_name = (
+            normalize_asset_display_name(display_name, str(model_name))
+            if display_name is not None
+            else None
+        )
         with self._connect() as conn:
             if overwrite_existing:
                 conn.execute(
                     """
-                    INSERT INTO model_ownership (model_name, owner_user_id, is_public, created_at)
-                    VALUES (?, ?, ?, ?)
+                    INSERT INTO model_ownership (model_name, display_name, owner_user_id, is_public, created_at)
+                    VALUES (?, ?, ?, ?, ?)
                     ON CONFLICT(model_name) DO UPDATE SET
                         owner_user_id = excluded.owner_user_id,
-                        is_public = excluded.is_public
+                        is_public = excluded.is_public,
+                        display_name = COALESCE(excluded.display_name, model_ownership.display_name)
                     """,
-                    (str(model_name), int(owner_user_id), 1 if is_public else 0, _utc_timestamp()),
+                    (str(model_name), safe_display_name, int(owner_user_id), 1 if is_public else 0, _utc_timestamp()),
                 )
             else:
                 conn.execute(
                     """
-                    INSERT OR IGNORE INTO model_ownership (model_name, owner_user_id, is_public, created_at)
-                    VALUES (?, ?, ?, ?)
+                    INSERT OR IGNORE INTO model_ownership (model_name, display_name, owner_user_id, is_public, created_at)
+                    VALUES (?, ?, ?, ?, ?)
                     """,
-                    (str(model_name), int(owner_user_id), 1 if is_public else 0, _utc_timestamp()),
+                    (str(model_name), safe_display_name, int(owner_user_id), 1 if is_public else 0, _utc_timestamp()),
                 )
 
     def get_model_owner(self, model_name: str) -> Optional[Dict[str, object]]:
@@ -742,6 +621,7 @@ class AuthStore:
                 """
                 SELECT
                     model_ownership.model_name,
+                    model_ownership.display_name,
                     model_ownership.owner_user_id,
                     model_ownership.is_public,
                     model_ownership.created_at,
@@ -758,6 +638,7 @@ class AuthStore:
             return None
         return {
             "model_name": str(row["model_name"]),
+            "display_name": str(row["display_name"] or row["model_name"]),
             "owner_user_id": int(row["owner_user_id"]),
             "is_public": bool(row["is_public"]),
             "created_at": str(row["created_at"]),
@@ -772,6 +653,7 @@ class AuthStore:
                 """
                 SELECT
                     model_ownership.model_name,
+                    model_ownership.display_name,
                     model_ownership.owner_user_id,
                     model_ownership.is_public,
                     model_ownership.created_at,
@@ -788,6 +670,7 @@ class AuthStore:
         return [
             {
                 "model_name": str(row["model_name"]),
+                "display_name": str(row["display_name"] or row["model_name"]),
                 "owner_user_id": int(row["owner_user_id"]),
                 "is_public": bool(row["is_public"]),
                 "created_at": str(row["created_at"]),
@@ -807,6 +690,7 @@ class AuthStore:
                 """
                 SELECT
                     model_ownership.model_name,
+                    model_ownership.display_name,
                     model_ownership.owner_user_id,
                     model_ownership.is_public,
                     model_ownership.created_at,
@@ -821,6 +705,7 @@ class AuthStore:
         return [
             {
                 "model_name": str(row["model_name"]),
+                "display_name": str(row["display_name"] or row["model_name"]),
                 "owner_user_id": int(row["owner_user_id"]),
                 "is_public": bool(row["is_public"]),
                 "created_at": str(row["created_at"]),
@@ -837,6 +722,7 @@ class AuthStore:
                 """
                 SELECT
                     model_ownership.model_name,
+                    model_ownership.display_name,
                     model_ownership.owner_user_id,
                     model_ownership.is_public,
                     model_ownership.created_at
@@ -849,6 +735,7 @@ class AuthStore:
         return [
             {
                 "model_name": str(row["model_name"]),
+                "display_name": str(row["display_name"] or row["model_name"]),
                 "owner_user_id": int(row["owner_user_id"]),
                 "is_public": bool(row["is_public"]),
                 "created_at": str(row["created_at"]),

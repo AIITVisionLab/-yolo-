@@ -19,19 +19,33 @@ from pathlib import Path
 
 BASE_URL = os.getenv("PLANT_API_BASE_URL", "http://127.0.0.1:7800").rstrip("/")
 ADMIN_USERNAME = os.getenv("PLANT_ADMIN_USERNAME") or os.getenv("BOOTSTRAP_ADMIN_USERNAME", "root")
-ADMIN_PASSWORD = os.getenv("PLANT_ADMIN_PASSWORD") or os.getenv("BOOTSTRAP_ADMIN_PASSWORD", "root")
-USER_USERNAME = os.getenv("PLANT_USER_USERNAME") or os.getenv("BOOTSTRAP_USER_USERNAME", "root_user")
-USER_PASSWORD = os.getenv("PLANT_USER_PASSWORD") or os.getenv("BOOTSTRAP_USER_PASSWORD", "root")
-THIRD_USERNAME = os.getenv("PLANT_THIRD_USERNAME", "123")
-THIRD_PASSWORD = os.getenv("PLANT_THIRD_PASSWORD", "1234")
+ADMIN_PASSWORD = os.getenv("PLANT_ADMIN_PASSWORD") or os.getenv("BOOTSTRAP_ADMIN_PASSWORD", "")
+USER_USERNAME = os.getenv("PLANT_USER_USERNAME") or os.getenv("BOOTSTRAP_USER_USERNAME", "")
+USER_PASSWORD = os.getenv("PLANT_USER_PASSWORD") or os.getenv("BOOTSTRAP_USER_PASSWORD", "")
+THIRD_USERNAME = os.getenv("PLANT_THIRD_USERNAME", "")
+THIRD_PASSWORD = os.getenv("PLANT_THIRD_PASSWORD", "")
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE_MODEL = ROOT / "plantbackend/models/best.onnx"
+MODELS_DIR = ROOT / "plantbackend/models"
 DB_PATH = ROOT / "plantbackend/plant_auth.db"
+PREFERRED_SOURCE_MODEL_NAMES = ("best.onnx", "best_4.onnx", "plant_disease.onnx")
 
 
 class CheckFailure(RuntimeError):
     pass
+
+
+def choose_source_model_path() -> Path:
+    available = sorted(path for path in MODELS_DIR.glob("*.onnx") if path.is_file() and path.stat().st_size > 0)
+    if not available:
+        available = sorted(path for path in MODELS_DIR.rglob("*.onnx") if path.is_file() and path.stat().st_size > 0)
+    assert_true(bool(available), f"Missing source model under {MODELS_DIR}")
+
+    available_by_name = {path.name: path for path in available}
+    for preferred_name in PREFERRED_SOURCE_MODEL_NAMES:
+        if preferred_name in available_by_name:
+            return available_by_name[preferred_name]
+    return available[0]
 
 
 def log(message):
@@ -133,6 +147,20 @@ def login(username, password):
     return token, payload
 
 
+def login_admin():
+    password_candidates = [ADMIN_PASSWORD] if ADMIN_PASSWORD else ["change_me", "root"]
+    last_error = None
+    for password in password_candidates:
+        try:
+            return login(ADMIN_USERNAME, password)
+        except Exception as exc:
+            last_error = exc
+    raise CheckFailure(
+        "管理员登录失败。请设置 PLANT_ADMIN_USERNAME / PLANT_ADMIN_PASSWORD，"
+        "或确认当前环境仍使用 root/change_me（兼容旧环境时也会尝试 root/root）。"
+    ) from last_error
+
+
 def register_user(username, password, display_name=None):
     payload = request(
         "/auth/register",
@@ -153,6 +181,24 @@ def try_login(username, password):
         return login(username, password)
     except Exception:
         return None, None
+
+
+def create_ephemeral_user(prefix):
+    username = f"{prefix}_{int(time.time())}_{uuid.uuid4().hex[:4]}"
+    password = "temp1234"
+    token, _ = register_user(username, password, display_name=username)
+    return username, token
+
+
+def resolve_test_user(explicit_username, explicit_password, prefix, cleanup_actions):
+    if explicit_username or explicit_password:
+        assert_true(bool(explicit_username and explicit_password), f"{prefix} 凭据不完整，请同时提供用户名和密码。")
+        token, _ = login(explicit_username, explicit_password)
+        return explicit_username, token
+
+    username, token = create_ephemeral_user(prefix)
+    cleanup_actions.append(("user", username))
+    return username, token
 
 
 def find_user(users_payload, username):
@@ -226,10 +272,19 @@ def poll_training_task(task_id, token):
 
 def cleanup_model_artifacts(model_name):
     stem = Path(model_name).stem
+    artifact_paths = list(MODELS_DIR.rglob(Path(model_name).name))
+    for model_path in artifact_paths:
+        for sibling_path in (
+            model_path,
+            model_path.with_suffix(".labels.json"),
+            model_path.with_suffix(".meta.json"),
+        ):
+            if sibling_path.is_dir():
+                shutil.rmtree(sibling_path, ignore_errors=True)
+            else:
+                sibling_path.unlink(missing_ok=True)
+
     for path in (
-        ROOT / f"plantbackend/models/{model_name}",
-        ROOT / f"plantbackend/models/{stem}.labels.json",
-        ROOT / f"plantbackend/models/{stem}.meta.json",
         ROOT / f"plantbackend/training_runs/{stem}_run",
     ):
         if path.is_dir():
@@ -247,7 +302,9 @@ def ensure_zip_bytes(body):
 
 
 def main():
-    assert_true(SOURCE_MODEL.exists(), f"Missing source model: {SOURCE_MODEL}")
+    source_model_path = choose_source_model_path()
+    assert_true(source_model_path.exists(), f"Missing source model: {source_model_path}")
+    source_model_bytes = source_model_path.read_bytes()
 
     cleanup_actions = []
     tmpdir = Path(tempfile.mkdtemp(prefix="full_feature_check_"))
@@ -261,6 +318,8 @@ def main():
     temp_password = "temp1234"
     temp_user_id = None
     sample_source_name = ""
+    user_username = USER_USERNAME
+    original_admin_model_name = None
 
     try:
         log("1. Health")
@@ -268,9 +327,9 @@ def main():
         assert_true(health.get("success") is True, "Health failed")
 
         log("2. Login")
-        admin_token, _ = login(ADMIN_USERNAME, ADMIN_PASSWORD)
-        user_token, _ = login(USER_USERNAME, USER_PASSWORD)
-        third_token, _ = try_login(THIRD_USERNAME, THIRD_PASSWORD)
+        admin_token, _ = login_admin()
+        user_username, user_token = resolve_test_user(USER_USERNAME, USER_PASSWORD, "full_check_user", cleanup_actions)
+        _, third_token = resolve_test_user(THIRD_USERNAME, THIRD_PASSWORD, "full_check_third", cleanup_actions)
 
         log("3. Session and admin views")
         session_payload = request("/auth/session", token=admin_token)
@@ -293,6 +352,10 @@ def main():
         log("5. Models and AI recommendation")
         admin_models = request("/models", token=admin_token)
         user_models = request("/models", token=user_token)
+        original_admin_model_name = str(admin_models.get("data", {}).get("current_model") or "").strip() or None
+        if not original_admin_model_name:
+            available_admin_models = admin_models.get("data", {}).get("available_models", [])
+            original_admin_model_name = str(available_admin_models[0]).strip() if available_admin_models else None
         assert_true(admin_models["data"]["available_models"], "No models visible to admin")
         assert_true(user_models["data"]["available_models"], "No models visible to user")
         ai_payload = request(
@@ -310,12 +373,12 @@ def main():
             token=temp_user_token,
             multipart_fields={"activate": "false", "is_public": "false"},
             multipart_files={
-                "model_file": {
-                    "filename": temp_private_model_name,
-                    "content": SOURCE_MODEL.read_bytes(),
-                    "content_type": "application/octet-stream",
-                }
-            },
+                    "model_file": {
+                        "filename": temp_private_model_name,
+                        "content": source_model_bytes,
+                        "content_type": "application/octet-stream",
+                    }
+                },
         )
         cleanup_actions.append(("model", temp_private_model_name))
         temp_public_model_name = f"{temp_username}_public.onnx"
@@ -325,12 +388,12 @@ def main():
             token=temp_user_token,
             multipart_fields={"activate": "false", "is_public": "true"},
             multipart_files={
-                "model_file": {
-                    "filename": temp_public_model_name,
-                    "content": SOURCE_MODEL.read_bytes(),
-                    "content_type": "application/octet-stream",
-                }
-            },
+                    "model_file": {
+                        "filename": temp_public_model_name,
+                        "content": source_model_bytes,
+                        "content_type": "application/octet-stream",
+                    }
+                },
         )
         cleanup_actions.append(("model", temp_public_model_name))
 
@@ -358,12 +421,12 @@ def main():
             token=admin_token,
             multipart_fields={"activate": "false", "is_public": "true"},
             multipart_files={
-                "model_file": {
-                    "filename": official_model_name,
-                    "content": SOURCE_MODEL.read_bytes(),
-                    "content_type": "application/octet-stream",
-                }
-            },
+                    "model_file": {
+                        "filename": official_model_name,
+                        "content": source_model_bytes,
+                        "content_type": "application/octet-stream",
+                    }
+                },
         )
         cleanup_actions.append(("model", official_model_name))
         other_user_models = request("/models", token=user_token)
@@ -476,7 +539,7 @@ def main():
         log("7. Admin model upload/download")
         upload_model_name = f"upload_smoke_{int(time.time())}.onnx"
         upload_model_path = tmpdir / upload_model_name
-        upload_model_path.write_bytes(SOURCE_MODEL.read_bytes())
+        upload_model_path.write_bytes(source_model_bytes)
         upload_payload = request(
             "/admin/models/upload",
             method="POST",
@@ -497,7 +560,7 @@ def main():
         ensure_zip_bytes(body)
 
         log("8. User private dataset CRUD, annotation, download, augment")
-        user_dataset = f"{USER_USERNAME}_full_check_{int(time.time())}"
+        user_dataset = f"{user_username}_full_check_{int(time.time())}"
         request(
             "/annotation/datasets",
             method="POST",
@@ -629,7 +692,12 @@ def main():
 
         post_train_models = request("/models", token=user_token)
         assert_true(train_model_name in post_train_models["data"]["available_models"], "Trained model not visible after training")
-        request(f"/models/select?{urllib.parse.urlencode({'model_name': 'best.onnx'})}", method="POST", token=admin_token)
+        if original_admin_model_name:
+            request(
+                f"/models/select?{urllib.parse.urlencode({'model_name': original_admin_model_name})}",
+                method="POST",
+                token=admin_token,
+            )
 
         log("Full feature check passed.")
         log(f"Sample image used: {sample_source_name}")

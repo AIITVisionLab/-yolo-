@@ -2,16 +2,20 @@
 import json
 import os
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 
 
 BASE_URL = os.getenv("PLANT_API_BASE_URL", "http://127.0.0.1:7800").rstrip("/")
 ADMIN_USERNAME = os.getenv("PLANT_ADMIN_USERNAME") or os.getenv("BOOTSTRAP_ADMIN_USERNAME", "root")
-ADMIN_PASSWORD = os.getenv("PLANT_ADMIN_PASSWORD") or os.getenv("BOOTSTRAP_ADMIN_PASSWORD", "root")
-USER_USERNAME = os.getenv("PLANT_USER_USERNAME") or os.getenv("BOOTSTRAP_USER_USERNAME", "root_user")
-USER_PASSWORD = os.getenv("PLANT_USER_PASSWORD") or os.getenv("BOOTSTRAP_USER_PASSWORD", "root")
+ADMIN_PASSWORD = os.getenv("PLANT_ADMIN_PASSWORD") or os.getenv("BOOTSTRAP_ADMIN_PASSWORD", "")
+USER_USERNAME = os.getenv("PLANT_USER_USERNAME") or os.getenv("BOOTSTRAP_USER_USERNAME", "")
+USER_PASSWORD = os.getenv("PLANT_USER_PASSWORD") or os.getenv("BOOTSTRAP_USER_PASSWORD", "")
+THIRD_USERNAME = os.getenv("PLANT_THIRD_USERNAME", "")
+THIRD_PASSWORD = os.getenv("PLANT_THIRD_PASSWORD", "")
 
 
 def request_json(path, method="GET", token=None, payload=None, expected_status=200):
@@ -51,17 +55,82 @@ def login(username, password):
     return token, payload
 
 
+def register_user(username, password, display_name=None):
+    payload = request_json(
+        "/auth/register",
+        method="POST",
+        payload={
+            "username": username,
+            "password": password,
+            "display_name": display_name or username,
+        },
+        expected_status=200,
+    )
+    token = str(payload.get("data", {}).get("token") or "")
+    if not token:
+        raise RuntimeError(f"Register token missing for user {username}")
+    return token, payload
+
+
 def assert_true(condition, message):
     if not condition:
         raise RuntimeError(message)
+
+
+def find_user(users_payload, username):
+    for item in users_payload.get("data", {}).get("users", []):
+        if str(item.get("username") or "") == username:
+            return item
+    return None
+
+
+def login_admin():
+    password_candidates = [ADMIN_PASSWORD] if ADMIN_PASSWORD else ["change_me", "root"]
+    last_error = None
+    for password in password_candidates:
+        try:
+            return login(ADMIN_USERNAME, password)
+        except Exception as exc:
+            last_error = exc
+    raise RuntimeError(
+        "管理员登录失败。请设置 PLANT_ADMIN_USERNAME / PLANT_ADMIN_PASSWORD，"
+        "或确认当前环境仍使用 root/change_me（兼容旧环境时也会尝试 root/root）。"
+    ) from last_error
+
+
+def create_ephemeral_user(prefix):
+    username = f"{prefix}_{int(time.time())}_{uuid.uuid4().hex[:4]}"
+    password = "temp1234"
+    token, _ = register_user(username, password, display_name=username)
+    return username, token
+
+
+def resolve_test_user(explicit_username, explicit_password, prefix):
+    if explicit_username or explicit_password:
+        if not (explicit_username and explicit_password):
+            raise RuntimeError(f"{prefix} 凭据不完整，请同时提供用户名和密码。")
+        token, _ = login(explicit_username, explicit_password)
+        return explicit_username, token, False
+
+    username, token = create_ephemeral_user(prefix)
+    return username, token, True
+
+
+def delete_user_by_username(admin_token, username):
+    users_payload = request_json("/users", token=admin_token)
+    user = find_user(users_payload, username)
+    if not user:
+        return
+    request_json(f"/admin/users/{int(user['id'])}", method="DELETE", token=admin_token, expected_status=200)
 
 
 def main():
     health = request_json("/health")
     assert_true(health.get("success") is True, "健康检查接口未返回 success=true")
 
-    admin_token, _ = login(ADMIN_USERNAME, ADMIN_PASSWORD)
-    user_token, _ = login(USER_USERNAME, USER_PASSWORD)
+    admin_token, _ = login_admin()
+    user_username, user_token, cleanup_user = resolve_test_user(USER_USERNAME, USER_PASSWORD, "smoke_user")
+    third_username, third_token, cleanup_third = resolve_test_user(THIRD_USERNAME, THIRD_PASSWORD, "smoke_third")
 
     admin_models = request_json("/models", token=admin_token)
     user_models = request_json("/models", token=user_token)
@@ -73,7 +142,7 @@ def main():
         "普通用户可见模型必须是管理员可见模型的子集",
     )
 
-    temp_dataset = f"{USER_USERNAME}_smoke_private"
+    temp_dataset = f"{user_username}_smoke_private_{int(time.time())}"
     created = False
     try:
         request_json(
@@ -108,15 +177,11 @@ def main():
             token=user_token,
         )
 
-        third_username = os.getenv("PLANT_THIRD_USERNAME")
-        third_password = os.getenv("PLANT_THIRD_PASSWORD")
-        if third_username and third_password:
-            third_token, _ = login(third_username, third_password)
-            request_json(
-                f"/annotation/classes?{urllib.parse.urlencode({'dataset': temp_dataset})}",
-                token=third_token,
-                expected_status=404,
-            )
+        request_json(
+            f"/annotation/classes?{urllib.parse.urlencode({'dataset': temp_dataset})}",
+            token=third_token,
+            expected_status=404,
+        )
     finally:
         if created:
             request_json(
@@ -126,6 +191,10 @@ def main():
                 payload={"dataset_name": temp_dataset},
                 expected_status=200,
             )
+        if cleanup_third:
+            delete_user_by_username(admin_token, third_username)
+        if cleanup_user:
+            delete_user_by_username(admin_token, user_username)
 
     print("烟雾检查通过。")
 

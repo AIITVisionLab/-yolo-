@@ -6,9 +6,8 @@
 
 ```text
 plant/
-├─ frontend/                  # Vite + React 前端壳
-│  ├─ src/                    # 组件、hooks、API 客户端与样式分层
-│  ├─ legacy/                 # 旧工作台，作为嵌入式 legacy workspace 保留
+├─ frontend/                  # Vite + Vue 3 前端工作台
+│  ├─ src/                    # 组件、composables、API 客户端与样式分层
 │  ├─ package.json
 │  └─ vite.config.js
 ├─ plantbackend/              # FastAPI 服务与业务逻辑
@@ -95,6 +94,14 @@ npm install
 npm run dev
 ```
 
+Windows PowerShell 如果遇到 `npm.ps1` 被执行策略拦截，可以直接改用：
+
+```powershell
+cd frontend
+.\npmw.cmd install
+.\npmw.cmd run dev
+```
+
 如果 `5500` 端口已经被占用，Vite 会因为 `strictPort` 配置直接退出。这时可以先关闭占用进程，或者改用下面的“构建产物预览”方式。
 
 访问地址：
@@ -110,6 +117,15 @@ cd frontend
 npm run build
 cd ..
 python3 serve_frontend.py --host 127.0.0.1 --port 5500
+```
+
+Windows PowerShell 对应命令：
+
+```powershell
+cd frontend
+.\npmw.cmd run build
+cd ..
+python serve_frontend.py --host 127.0.0.1 --port 5500
 ```
 
 `serve_frontend.py` 会把前端的 `/api/*` 请求自动转发到 `http://127.0.0.1:7800`。如果你的后端不在这个地址，可以改成：
@@ -132,6 +148,26 @@ cp plantbackend/.env.example plantbackend/.env
 export BOOTSTRAP_ADMIN_PASSWORD="请改成你自己的强密码"
 ```
 
+如果数据库里已经有管理员，但你忘了当前密码，`.env` 里的 `BOOTSTRAP_ADMIN_PASSWORD` 不会自动覆盖旧密码。可以用下面的维护命令重置：
+
+```bash
+python3 tools/reset_user_password.py --username root --password "新密码"
+```
+
+如果你已经在环境里设置了 `BOOTSTRAP_ADMIN_PASSWORD`，也可以省略 `--password`：
+
+```bash
+python3 tools/reset_user_password.py --username root
+```
+
+如果你需要在部署环境里持久化知识库缓存和增强脚本状态，也建议显式关注这几个变量：
+
+```bash
+KNOWLEDGE_DB_PATH=
+AUGMENTATION_ALGORITHMS_DIR=
+ACTIVE_AUGMENTATION_SCRIPT_RECORD=
+```
+
 ## Docker 部署
 
 部署文件放在 `deploy/`：
@@ -146,8 +182,8 @@ docker compose -f compose.prod.yml up --build
 
 - 前端通过 Nginx 提供服务
 - `/api` 会自动反代到后端
-- React 壳会加载 `/legacy/index.html?embed=1&view=...`
-- legacy 工作台与新壳共用同一份 `plant_auth_token`
+- `plantbackend/models`、`plantbackend/annotation_datasets`、`plantbackend/training_runs` 会作为运行数据持久化
+- `plantbackend/data` 与 `plantbackend/augmentation_algorithms` 会持久化知识库缓存、增强脚本和当前增强选择
 
 ## 接入实验室大模型
 
@@ -195,6 +231,6 @@ bash tools/clean_workspace.sh
 ## 说明
 
 - 当前后端已经拆出稳定的 ASGI 入口，方便继续把 `api_router.py` 按路由域进一步细分。
-- 前端已经从“大型静态三件套页面”升级成 `Vite + React` 壳层，旧工作台被隔离到 `frontend/legacy/` 里做渐进迁移。
-- 新前端负责品牌、会话、导航和嵌入调度，legacy 继续承载识别、训练和管理细节，后续可以逐块替换。
-- 模型文件、数据集和数据库属于运行数据，不算“构建垃圾”，默认不会被清理脚本误删。
+- 前端当前是 `Vite + Vue 3` 的工作区式单页应用，识别、标注训练、模型资产和平台管理都在 `frontend/src` 下。
+- 顶层前端负责品牌、会话、导航、健康检查和工作区调度，不再依赖 `frontend/legacy/` 目录。
+- 模型文件、数据集、知识库数据库和训练结果属于运行数据，不算“构建垃圾”，默认不会被清理脚本误删。

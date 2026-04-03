@@ -70,7 +70,7 @@ code {
 
 .app-shell::before {
   content: "";
-  position: fixed;
+  position: absolute;
   inset: 0;
   pointer-events: none;
   background:
@@ -111,10 +111,26 @@ code {
   box-shadow: 0 16px 32px rgba(26, 63, 45, 0.22);
 }
 
+.primary:disabled {
+  opacity: 1;
+  color: rgba(24, 41, 30, 0.58);
+  background: linear-gradient(135deg, rgba(236, 240, 233, 0.98) 0%, rgba(223, 229, 219, 0.98) 100%);
+  border: 1px solid rgba(32, 49, 38, 0.08);
+  box-shadow: none;
+}
+
 .secondary {
   color: var(--surface-ink);
   background: rgba(255, 251, 246, 0.78);
   border: 1px solid rgba(32, 49, 38, 0.1);
+}
+
+.secondary:disabled {
+  opacity: 1;
+  color: rgba(27, 42, 34, 0.48);
+  background: rgba(245, 242, 237, 0.92);
+  border-color: rgba(32, 49, 38, 0.08);
+  box-shadow: none;
 }
 
 .status-pill {
@@ -145,15 +161,15 @@ code {
 }
 
 .brand-mark__glyph {
-  display: grid;
+  display: none !important;
   place-items: center;
   width: 46px;
   height: 46px;
   border-radius: 16px;
   color: #f7fcf6;
-  background: linear-gradient(135deg, #3b7a58 0%, #20412f 100%);
-  box-shadow: 0 14px 30px rgba(32, 65, 47, 0.18);
-}
+  /* background: linear-gradient(135deg, #3b7a58 0%, #20412f 100%); */
+  /* box-shadow: 0 14px 30px rgba(32, 65, 47, 0.18); */
+} 
 
 .brand-mark__glyph svg {
   width: 27px;
@@ -225,7 +241,7 @@ body {
 
 .app-shell::after {
   content: "";
-  position: fixed;
+  position: absolute;
   inset: 0;
   pointer-events: none;
   background:
@@ -434,8 +450,8 @@ body::before {
       transparent 1px,
       transparent 120px
     );
-  mix-blend-mode: multiply;
-  opacity: 0.18;
+  mix-blend-mode: normal;
+  opacity: 0.08;
 }
 
 ::selection {
@@ -525,7 +541,6 @@ code {
   border: 1px solid rgba(21, 37, 29, 0.1);
   background: rgba(255, 255, 255, 0.68);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.62);
-  backdrop-filter: blur(12px);
 }
 
 .secondary:hover {
@@ -540,7 +555,6 @@ code {
   background: rgba(255, 255, 255, 0.64);
   border: 1px solid rgba(21, 37, 29, 0.08);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6);
-  backdrop-filter: blur(12px);
 }
 
 .status-pill--online {
@@ -614,4 +628,11 @@ code {
     min-height: 46px;
     padding-inline: 16px;
   }
+}
+
+.icon{
+  width: 35px;
+  height: 35px;
+  x: -2px;
+  y: -2px;
 }

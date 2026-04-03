@@ -1,48 +1,35 @@
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { defineConfig } from "vite";
-import react from "@vitejs/plugin-react";
+import { defineConfig } from 'vite'
+import vue from '@vitejs/plugin-vue'
+import path from 'path'
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
-function rewriteApiPrefix(pathname) {
-  return pathname.replace(/^\/api(?=\/|$)/, "") || "/";
-}
+const backendTarget = process.env.VITE_PROXY_TARGET || 'http://127.0.0.1:7800'
+const frontendPort = Number(process.env.VITE_PORT || 5500)
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [vue()],
   resolve: {
     alias: {
-      "@": path.resolve(__dirname, "src"),
+      '@': path.resolve(__dirname, './src'),
     },
   },
   server: {
-    host: "127.0.0.1",
-    port: 5500,
+    port: frontendPort,
     strictPort: true,
     proxy: {
-      "/api": {
-        target: "http://127.0.0.1:7800",
+      '/api': {
+        target: backendTarget,
         changeOrigin: true,
-        rewrite: rewriteApiPrefix,
+        rewrite: (path) => path.replace(/^\/api/, ''),
       },
     },
   },
   preview: {
-    host: "127.0.0.1",
-    port: 5500,
+    port: frontendPort,
     strictPort: true,
-    proxy: {
-      "/api": {
-        target: "http://127.0.0.1:7800",
-        changeOrigin: true,
-        rewrite: rewriteApiPrefix,
-      },
-    },
   },
   build: {
-    outDir: "dist",
-    emptyOutDir: true,
-    sourcemap: true,
+    outDir: 'dist',
+    assetsDir: 'assets',
+    sourcemap: false,
   },
-});
+})
