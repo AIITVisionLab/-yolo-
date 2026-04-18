@@ -327,6 +327,7 @@ class ModelService:
             preprocess_meta,
             confidence_threshold=requested_threshold,
         )
+
         if allow_confidence_fallback and not detections:
             for fallback_threshold in (0.03, 0.01):
                 if requested_threshold <= fallback_threshold:
@@ -339,6 +340,7 @@ class ModelService:
                 )
                 if detections:
                     break
+
         if not detections:
             return {
                 "model_name": active_model_name,

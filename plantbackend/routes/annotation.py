@@ -48,6 +48,12 @@ router.add_api_route(
     response_model=AnnotationSourceImageDetailResponse,
 )
 router.add_api_route(
+    "/annotation/source-images/{dataset_name}/{image_name}/delete",
+    handlers.delete_annotation_source_image,
+    methods=["POST"],
+    response_model=AnnotationClassesResponse,
+)
+router.add_api_route(
     "/annotation/datasets/delete",
     handlers.remove_dataset,
     methods=["POST"],

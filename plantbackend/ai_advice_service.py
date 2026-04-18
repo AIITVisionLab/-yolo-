@@ -1198,6 +1198,8 @@ class AiAdviceService:
 
     def generate_class_knowledge(self, class_name: str) -> Dict[str, object]:
         safe_label = str(class_name or "未知类别").strip() or "未知类别"
+        if _resolve_exact_class_knowledge(safe_label):
+            return build_fallback_class_knowledge(safe_label)
         if not self._is_configured():
             return build_fallback_class_knowledge(safe_label)
 

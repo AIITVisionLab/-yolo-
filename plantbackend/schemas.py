@@ -180,6 +180,7 @@ class ModelTrainRequest(BaseModel):
     model_name: Optional[str] = None
     epochs: Optional[int] = None
     imgsz: Optional[int] = None
+    train_ratio: Optional[float] = None
 
 
 class ModelTrainData(BaseModel):
@@ -313,6 +314,7 @@ class AnnotationDatasetItem(BaseModel):
     is_public: bool = False
     is_official: bool = False
     can_write: bool = False
+    image_count: int = 0
     owner_username: Optional[str] = None
     owner_display_name: Optional[str] = None
 

@@ -7,7 +7,7 @@ from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
-FRONTEND_DIR = PROJECT_ROOT / "frontend"
+FRONTEND_DIR = PROJECT_ROOT / "fronted"
 FRONTEND_DIST_DIR = FRONTEND_DIR / "dist"
 DEFAULT_API_TARGET = "http://127.0.0.1:7800"
 

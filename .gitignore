@@ -56,6 +56,11 @@ frontend/playwright-report/
 frontend/test-results/
 frontend/.vite/
 frontend/index.shell-backup-*.html
+fronted/.git/
+fronted/.env
+fronted/.env.production
+fronted/node_modules/
+fronted/dist/
 releases/
 
 *.pt

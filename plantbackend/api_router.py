@@ -560,11 +560,16 @@ def build_managed_dataset_item(dataset_record: Dict[str, object], current_user: 
 
 def build_annotation_dataset_item(dataset_name: str, current_user: Dict[str, object]) -> AnnotationDatasetItem:
     dataset_owner = auth_store.get_dataset_owner(dataset_name)
+    # 获取数据集的图片数量
+    structure = get_annotation_dataset_structure(dataset_name)
+    source_image_count = count_raw_source_images(structure) if structure["images_raw"].exists() else 0
+    
     return AnnotationDatasetItem(
         name=dataset_name,
         is_public=bool(dataset_owner and dataset_owner.get("is_public")),
         is_official=bool(dataset_owner and str(dataset_owner.get("owner_role") or "") == "admin"),
         can_write=can_write_dataset(dataset_owner, current_user),
+        image_count=source_image_count,
         owner_username=str(dataset_owner.get("owner_username")) if dataset_owner and dataset_owner.get("owner_username") else None,
         owner_display_name=str(dataset_owner.get("owner_display_name")) if dataset_owner and dataset_owner.get("owner_display_name") else None,
     )
@@ -908,6 +913,7 @@ def start_training_task(
     requested_model_name: Optional[str],
     epochs: int,
     imgsz: int,
+    train_ratio: float,
     current_user: Dict[str, object],
 ) -> ModelTrainTaskData:
     global ACTIVE_TRAINING_TASK_ID
@@ -975,6 +981,7 @@ def start_training_task(
                 requested_model_name,
                 epochs,
                 imgsz,
+                train_ratio,
                 current_user,
                 progress_callback=handle_progress,
             )
@@ -1035,20 +1042,33 @@ def load_base_annotation_classes() -> List[str]:
 def build_annotation_class_templates(base_classes: List[str]) -> List[AnnotationClassTemplateItem]:
     deduped_classes = list(dict.fromkeys(base_classes))
     templates: List[AnnotationClassTemplateItem] = []
+    
+    # 调试信息：记录加载的类别
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"Building templates from {len(deduped_classes)} base classes")
+    if deduped_classes:
+        logger.info(f"Base classes sample: {deduped_classes[:5]}...")
+    
     for spec in ANNOTATION_CLASS_TEMPLATE_SPECS:
         prefixes = spec["prefixes"]
         if prefixes is None:
+            # universal 模板包含所有类别
             template_classes = deduped_classes
         elif not prefixes:
+            # blank 模板没有类别
             template_classes = []
         else:
+            # 根据前缀匹配类别
             template_classes = [
                 class_name
                 for class_name in deduped_classes
                 if any(class_name.lower().startswith(str(prefix).lower()) for prefix in prefixes)
             ]
-        if not template_classes and spec["key"] not in {"blank", "universal"}:
-            continue
+            logger.info(f"Template '{spec['key']}' with prefixes {prefixes}: found {len(template_classes)} classes")
+        
+        # 修复：显示所有预定义模板，即使当前没有匹配到类别
+        # 这样用户可以看到所有可用的模板选项
         templates.append(
             AnnotationClassTemplateItem(
                 key=str(spec["key"]),
@@ -1058,6 +1078,8 @@ def build_annotation_class_templates(base_classes: List[str]) -> List[Annotation
                 classes=template_classes,
             )
         )
+    
+    logger.info(f"Built {len(templates)} templates total")
     return templates
 
 
@@ -2431,13 +2453,14 @@ def train_model_and_export(
     requested_model_name: Optional[str],
     epochs: int,
     imgsz: int,
+    train_ratio: float,
     current_user: Dict[str, object],
     progress_callback: Optional[Callable[[Dict[str, object]], None]] = None,
 ) -> ModelTrainData:
     dataset_key, classes, structure, train_count, val_count, temp_training_root = ensure_training_split(
         dataset_name,
         current_user,
-        train_ratio=settings.augment_train_ratio,
+        train_ratio=train_ratio,
         seed=settings.augment_seed,
     )
 
@@ -2606,6 +2629,31 @@ def build_models_response(current_user: Dict[str, object], message: str = "模�
     )
 
 
+# YOLOv8 预训练模型列表，可用于迁移学习训练
+TRAINING_BASE_MODELS = [
+    {"name": "yolov8n.pt", "label": "YOLOv8 Nano (推荐，轻量级)", "description": "最小模型，速度快，适合普通硬件"},
+    {"name": "yolov8s.pt", "label": "YOLOv8 Small", "description": "小型模型，速度与精度平衡"},
+    {"name": "yolov8m.pt", "label": "YOLOv8 Medium", "description": "中型模型，精度较高"},
+    {"name": "yolov8l.pt", "label": "YOLOv8 Large", "description": "大型模型，精度更高"},
+    {"name": "yolov8x.pt", "label": "YOLOv8 XLarge", "description": "最大模型，精度最高，速度慢"},
+]
+
+
+@router.get("/models/training-bases")
+def get_training_base_models(
+    current_user: Dict[str, object] = Depends(get_current_user),
+) -> Dict[str, object]:
+    """获取可用于训练的基础模型列表（YOLOv8 预训练权重）"""
+    default_model = settings.training_base_model or "yolov8n.pt"
+    return {
+        "success": True,
+        "data": {
+            "models": TRAINING_BASE_MODELS,
+            "default_model": default_model,
+        },
+    }
+
+
 def resolve_unique_annotation_source_image_path(structure: Dict[str, Path], original_filename: str) -> Path:
     safe_name = Path(original_filename or "").name
     extension = Path(safe_name).suffix.lower()
@@ -2663,8 +2711,8 @@ def parse_annotation_items(raw_annotations: str) -> List[dict]:
     except json.JSONDecodeError as exc:
         raise HTTPException(status_code=400, detail="标注数据必须是合法的 JSON。") from exc
 
-    if not isinstance(payload, list) or not payload:
-        raise HTTPException(status_code=400, detail="至少需要一个标注框。")
+    if not isinstance(payload, list):
+        raise HTTPException(status_code=400, detail="标注数据必须是数组。")
 
     parsed: List[dict] = []
     for index, item in enumerate(payload):
@@ -3142,7 +3190,7 @@ def remove_model(
 @router.post("/models/select", response_model=ModelsResponse)
 def select_model(
     model_name: str = Query(..., description="Model filename in models directory"),
-    current_user: Dict[str, object] = Depends(require_admin),
+    current_user: Dict[str, object] = Depends(get_current_user),
 ) -> ModelsResponse:
     try:
         selected_model = model_service.set_active_model(ensure_model_access(model_name, current_user))
@@ -3162,6 +3210,7 @@ def train_model(
     model_name = (payload.model_name or "").strip() or None
     epochs = payload.epochs if payload.epochs is not None else settings.training_epochs
     imgsz = payload.imgsz if payload.imgsz is not None else settings.training_imgsz
+    train_ratio = payload.train_ratio if payload.train_ratio is not None else settings.augment_train_ratio
 
     if not dataset_name.strip():
         raise HTTPException(status_code=400, detail="训练时必须填写数据集名称。")
@@ -3172,7 +3221,10 @@ def train_model(
     if imgsz < 32:
         raise HTTPException(status_code=400, detail="训练图片尺寸至少要为 32。")
 
-    data = train_model_and_export(dataset_name, base_model, model_name, epochs, imgsz, current_user)
+    if not 0.1 <= train_ratio <= 0.95:
+        raise HTTPException(status_code=400, detail="训练集比例必须在 0.1 到 0.95 之间。")
+
+    data = train_model_and_export(dataset_name, base_model, model_name, epochs, imgsz, train_ratio, current_user)
     return ModelTrainResponse(
         success=True,
         message="模型训练并导出成功",
@@ -3190,6 +3242,7 @@ def start_train_model_task(
     model_name = (payload.model_name or "").strip() or None
     epochs = payload.epochs if payload.epochs is not None else settings.training_epochs
     imgsz = payload.imgsz if payload.imgsz is not None else settings.training_imgsz
+    train_ratio = payload.train_ratio if payload.train_ratio is not None else settings.augment_train_ratio
 
     if not dataset_name.strip():
         raise HTTPException(status_code=400, detail="训练时必须填写数据集名称。")
@@ -3200,7 +3253,10 @@ def start_train_model_task(
     if imgsz < 32:
         raise HTTPException(status_code=400, detail="训练图片尺寸至少要为 32。")
 
-    data = start_training_task(dataset_name, base_model, model_name, epochs, imgsz, current_user)
+    if not 0.1 <= train_ratio <= 0.95:
+        raise HTTPException(status_code=400, detail="训练集比例必须在 0.1 到 0.95 之间。")
+
+    data = start_training_task(dataset_name, base_model, model_name, epochs, imgsz, train_ratio, current_user)
     return ModelTrainTaskResponse(
         success=True,
         message="模型训练任务已启动",
@@ -3372,6 +3428,40 @@ def get_annotation_source_image_detail(
     )
 
 
+@router.post("/annotation/source-images/{dataset_name}/{image_name}/delete", response_model=AnnotationClassesResponse)
+def delete_annotation_source_image(
+    dataset_name: str,
+    image_name: str,
+    current_user: Dict[str, object] = Depends(get_current_user),
+) -> AnnotationClassesResponse:
+    dataset_key = ensure_dataset_write_access(dataset_name, current_user, allow_auto_create=False)
+    structure = get_annotation_dataset_structure(dataset_key)
+    source_image_name = Path(image_name or "").name
+    if not source_image_name:
+        raise HTTPException(status_code=404, detail="原始图片不存在。")
+
+    image_path = structure["images_raw"] / source_image_name
+    if not image_path.exists() or not image_path.is_file():
+        raise HTTPException(status_code=404, detail=f"原始图片不存在：{source_image_name}")
+
+    label_name = f"{image_path.stem}.txt"
+    for path in (
+        image_path,
+        structure["labels_raw"] / label_name,
+        structure["images_train"] / source_image_name,
+        structure["labels_train"] / label_name,
+        structure["images_val"] / source_image_name,
+        structure["labels_val"] / label_name,
+    ):
+        path.unlink(missing_ok=True)
+
+    return build_annotation_classes_response(
+        current_user,
+        dataset_key,
+        message=f"图片已删除：{source_image_name}",
+    )
+
+
 @router.post("/annotation/datasets/delete", response_model=AnnotationClassesResponse)
 def remove_dataset(
     payload: AnnotationDatasetDeleteRequest = Body(...),
@@ -3521,7 +3611,7 @@ async def predict(
             image_bytes,
             resolved_model_name,
             confidence_threshold,
-            not realtime_mode,
+            allow_confidence_fallback=realtime_mode or confidence_threshold is None,
         )
         prediction_ms = int((perf_counter() - prediction_started) * 1000)
     except ValueError as exc:

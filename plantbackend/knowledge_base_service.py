@@ -171,31 +171,39 @@ class KnowledgeBaseService:
         dataset_name: Optional[str] = None,
     ) -> AiAdviceData:
         cached = self.lookup_annotation_class_entry(disease_label, dataset_name=dataset_name)
-        if cached:
+        if cached and not self.is_legacy_generic_class_advice(cached):
             return self.build_cached_ai_advice(cached, disease_label)
 
-        payload = self.ai_service.generate(
-            disease_label=disease_label,
-            confidence=confidence,
-            top_predictions=top_predictions or [],
-            image_bytes=image_bytes,
-            image_content_type=image_content_type,
-        )
-        if dataset_name and str(disease_label or "").strip() and str(disease_label or "").strip() != "No detection":
-            summary = str(payload.get("summary") or "").strip()
-            advice = [str(item).strip() for item in payload.get("advice", []) if str(item).strip()]
-            if summary and advice:
-                self.store.upsert_entry(
-                    dataset_name=dataset_name,
-                    entry_type=self.CLASS_ENTRY_TYPE,
-                    entry_key=str(disease_label).strip(),
-                    title=str(disease_label).strip(),
-                    summary=summary,
-                    advice=advice,
-                    source=str(payload.get("source") or "builtin"),
-                    detail=str(payload.get("detail") or "").strip() or None,
-                    metadata={"captured_from": "predict"},
-                )
+        safe_label = str(disease_label or "").strip()
+        if not safe_label or safe_label == "No detection":
+            payload = self.ai_service.generate(
+                disease_label=disease_label,
+                confidence=confidence,
+                top_predictions=top_predictions or [],
+                image_bytes=image_bytes,
+                image_content_type=image_content_type,
+            )
+            return self.to_ai_advice_data(payload, disease_label)
+
+        payload = self.ai_service.generate_class_knowledge(safe_label)
+        summary = str(payload.get("summary") or "").strip()
+        advice = [str(item).strip() for item in payload.get("advice", []) if str(item).strip()]
+        if dataset_name and summary and advice:
+            self.store.upsert_entry(
+                dataset_name=dataset_name,
+                entry_type=self.CLASS_ENTRY_TYPE,
+                entry_key=safe_label,
+                title=safe_label,
+                summary=summary,
+                advice=advice,
+                source=str(payload.get("source") or "builtin"),
+                detail=str(payload.get("detail") or "").strip() or None,
+                metadata={
+                    "captured_from": "predict",
+                    "confidence": float(confidence or 0.0),
+                    "top_predictions": list(top_predictions or [])[:5],
+                },
+            )
         return self.to_ai_advice_data(payload, disease_label)
 
     def delete_annotation_class_advice(self, dataset_name: str, class_name: str) -> None:
